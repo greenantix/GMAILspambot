@@ -2,30 +2,24 @@
   "keywords": [
     "meeting",
     "appointment",
-    "viewing",
-    "application",
-    "request",
     "housing",
     "real estate",
-    "rent",
+    "rental",
+    "application",
+    "viewing",
     "property",
-    "inquiry",
-    "contact"
+    "address"
   ],
   "senders": [
     "@gmail.com",
     "@outlook.com",
     "@yahoo.com",
+    "realtor@",
     "zillow@",
     "trulia@",
     "rentcafe@",
-    "convo.zillow.com",
-    "lschaefer@waypointservices.org",
     "leasing@",
-    "lisa@gbhproperty.com",
-    "info@emp.apartmentlist.com",
-    "info@notifications.realtor.com",
-    "Dianne.K.Ramirez@usps.gov",
-    "averycampbell@"
+    "property@",
+    "rental@"
   ]
 }

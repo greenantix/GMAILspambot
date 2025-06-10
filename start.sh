@@ -90,9 +90,9 @@ echo "🎯 Starting Gmail Cleaner GUI..."
 echo "   Close the GUI window or press Ctrl+C here to stop"
 echo ""
 
-# Make the script executable and run it
+# Make the script executable and run the GUI
 chmod +x gmail_lm_cleaner.py
-python3 gmail_lm_cleaner.py
+python3 -c "from gmail_lm_cleaner import GmailCleanerGUI; app = GmailCleanerGUI(); app.run()"
 
 echo ""
 echo "👋 Gmail Cleaner stopped"

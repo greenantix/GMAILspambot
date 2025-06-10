@@ -10,8 +10,10 @@
   "senders": [
     "billing@",
     "statements@",
+    "bank@",
+    "finance@",
+    "tax@",
     "invoice@",
-    "noreply@mail.anthropic.com",
-    "dave@mail.dave.com"
+    "payments@"
   ]
 }

@@ -33,7 +33,10 @@ from log_config import get_logger
 logger = get_logger(__name__)
 
 # If modifying these scopes, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/gmail.settings.basic'
+]
 
 # =========================
 # OAuth2 Authentication

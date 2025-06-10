@@ -20,9 +20,14 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from gmail_api_utils import get_gmail_service, GmailLabelManager
 from gemini_config_updater import update_label_schema, update_category_rules, update_label_action_mappings
+import logging
+from logging.handlers import RotatingFileHandler
 
 # If modifying these scopes, delete the token.json file.
-SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/gmail.settings.basic'
+]
 
 # Load environment variables
 load_dotenv()
@@ -68,6 +73,7 @@ class GmailLMCleaner:
         self.service = None
         self.settings = self.load_settings()
         self.llm_prompts = self.load_llm_prompts() # Load LLM prompts
+        self.logger = self.setup_logging()
         self.setup_gmail_service()
         
     def load_settings(self):
@@ -84,6 +90,47 @@ class GmailLMCleaner:
             except:
                 pass
         return DEFAULT_SETTINGS.copy()
+    
+    def setup_logging(self):
+        """Setup comprehensive logging system."""
+        logger = logging.getLogger("GmailCleaner")
+        logger.setLevel(logging.DEBUG)
+        
+        # Clear existing handlers
+        for handler in logger.handlers[:]:
+            logger.removeHandler(handler)
+        
+        # Create logs directory if it doesn't exist
+        os.makedirs('logs', exist_ok=True)
+        
+        # File handler with rotation
+        fh = RotatingFileHandler(
+            'logs/email_processing.log', 
+            maxBytes=10*1024*1024, 
+            backupCount=5
+        )
+        fh.setLevel(logging.DEBUG)
+        
+        # Console handler
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        
+        # Formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        fh.setFormatter(formatter)
+        ch.setFormatter(formatter)
+        
+        logger.addHandler(fh)
+        logger.addHandler(ch)
+        
+        return logger
+    
+    def log_email_processing(self, email_id, subject, decision, reason):
+        """Log email processing details."""
+        self.logger.info(f"Processed: {email_id} | {subject[:50]}... | "
+                        f"Decision: {decision} | Reason: {reason}")
     
     def load_llm_prompts(self):
         """Load LLM prompts from settings file."""
@@ -149,7 +196,10 @@ class GmailLMCleaner:
                 'labels': message.get('labelIds', [])
             }
         except Exception as e:
-            print(f"Error fetching email {msg_id}: {e}")
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Error fetching email {msg_id}: {e}")
+            else:
+                print(f"Error fetching email {msg_id}: {e}")
             return None
     
     def extract_body(self, payload):
@@ -198,6 +248,326 @@ class GmailLMCleaner:
         
         return promo_count >= 2  # Require at least 2 promotional keywords
     
+    def build_categorization_prompt(self, email_data):
+        """Build a structured prompt for email categorization matching LM Studio system prompt."""
+        prompt = f"""Analyze this email:
+Subject: {email_data['subject']}
+From: {email_data['sender']}
+Preview: {email_data['body_preview']}"""
+        return prompt
+
+    def call_lm_studio(self, prompt, timeout=30):
+        """Call LM Studio with proper error handling."""
+        try:
+            payload = {
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.1,
+                "max_tokens": 100
+            }
+            
+            # Add model selection if specified
+            model_name = self.settings.get('lm_studio_model', 'auto')
+            if model_name and model_name != 'auto':
+                payload['model'] = model_name
+            
+            response = requests.post(
+                LM_STUDIO_URL,
+                json=payload,
+                timeout=timeout
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['message']['content']
+                
+                # Try to extract JSON from response
+                import re
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    return json.loads(json_match.group())
+                else:
+                    return {"action": "KEEP", "reason": "Could not parse LLM response"}
+            else:
+                return {"action": "KEEP", "reason": f"LLM error: {response.status_code}"}
+                
+        except requests.exceptions.Timeout:
+            return {"action": "KEEP", "reason": "LLM timeout"}
+        except Exception as e:
+            return {"action": "KEEP", "reason": f"LLM error: {str(e)}"}
+
+    def validate_llm_decision(self, decision):
+        """Validate and sanitize LLM decision."""
+        valid_actions = ["INBOX", "BILLS", "SHOPPING", "NEWSLETTERS", "SOCIAL", "PERSONAL", "JUNK", "KEEP"]
+        
+        if not isinstance(decision, dict):
+            return {"action": "KEEP", "reason": "Invalid decision format"}
+        
+        action = decision.get('action', 'KEEP').upper()
+        if action not in valid_actions:
+            return {"action": "KEEP", "reason": f"Invalid action: {action}"}
+        
+        reason = str(decision.get('reason', 'No reason provided'))[:200]
+        
+        return {"action": action, "reason": reason}
+    
+    def setup_gmail_filters(self, log_callback=None):
+        """Set up Gmail filters based on category rules for automatic processing."""
+        if log_callback:
+            log_callback("🔧 Setting up Gmail filters for automatic categorization...")
+        
+        try:
+            category_rules = self.settings.get('category_rules', {})
+            filters_created = 0
+            
+            for category, rules in category_rules.items():
+                if category == 'INBOX':  # Skip INBOX - we want these to stay
+                    continue
+                    
+                # Create label if it doesn't exist
+                label_id = self.create_label_if_not_exists(category)
+                if not label_id:
+                    if log_callback:
+                        log_callback(f"   ⚠️ Skipping {category} - couldn't create label")
+                    continue
+                
+                # Create filters for sender patterns (only specific, non-generic patterns)
+                senders = rules.get('senders', [])
+                # Filter out overly broad patterns that could cause issues
+                specific_senders = [s for s in senders if not s.startswith('@gmail.com') and not s.startswith('@outlook.com') and not s.startswith('@yahoo.com') and len(s) > 3]
+                
+                for sender_pattern in specific_senders[:5]:  # Limit to 5 per category to avoid spam
+                    try:
+                        filter_criteria = {
+                            'from': sender_pattern
+                        }
+                        
+                        filter_action = {
+                            'addLabelIds': [label_id],
+                            'removeLabelIds': ['INBOX']  # Remove from inbox for non-inbox categories
+                        }
+                        
+                        # For JUNK category, also mark as spam
+                        if category == 'JUNK':
+                            filter_action['markAsSpam'] = True
+                        
+                        filter_body = {
+                            'criteria': filter_criteria,
+                            'action': filter_action
+                        }
+                        
+                        # Check if filter already exists to avoid duplicates
+                        existing_filters = self.service.users().settings().filters().list(userId='me').execute()
+                        filter_exists = False
+                        
+                        for existing_filter in existing_filters.get('filter', []):
+                            if existing_filter.get('criteria', {}).get('from') == sender_pattern:
+                                filter_exists = True
+                                break
+                        
+                        if not filter_exists:
+                            # Create filter with retry logic
+                            success = self._create_filter_with_retry(filter_body)
+                            if success:
+                                filters_created += 1
+                                if log_callback:
+                                    log_callback(f"   ✅ Created filter: {sender_pattern} → {category}")
+                            else:
+                                if log_callback and filters_created == 0:  # Only log scope issues once
+                                    log_callback(f"   ⚠️ Filter creation failed - check OAuth permissions")
+                                    
+                    except Exception as e:
+                        error_msg = str(e)
+                        if '403' in error_msg and 'insufficient' in error_msg.lower():
+                            if log_callback and filters_created == 0:  # Only log scope issues once
+                                log_callback(f"   ❌ Insufficient permissions for filter creation")
+                                log_callback(f"   💡 Re-authenticate with gmail.settings.basic scope")
+                            break  # Stop trying if we have scope issues
+                        continue
+                
+                # Create filters for subject keywords (top 3 most specific, avoid generic words)
+                keywords = rules.get('keywords', [])
+                generic_words = ['update', 'notification', 'message', 'email', 'info', 'news']
+                specific_keywords = [kw for kw in keywords if len(kw) > 8 and kw.lower() not in generic_words][:3]  # Longer, more specific keywords
+                
+                for keyword in specific_keywords:
+                    try:
+                        filter_criteria = {
+                            'subject': keyword
+                        }
+                        
+                        filter_action = {
+                            'addLabelIds': [label_id],
+                            'removeLabelIds': ['INBOX']
+                        }
+                        
+                        if category == 'JUNK':
+                            filter_action['markAsSpam'] = True
+                        
+                        filter_body = {
+                            'criteria': filter_criteria,
+                            'action': filter_action
+                        }
+                        
+                        # Check if filter already exists
+                        existing_filters = self.service.users().settings().filters().list(userId='me').execute()
+                        filter_exists = False
+                        
+                        for existing_filter in existing_filters.get('filter', []):
+                            if existing_filter.get('criteria', {}).get('subject') == keyword:
+                                filter_exists = True
+                                break
+                        
+                        if not filter_exists:
+                            # Create filter with retry logic
+                            success = self._create_filter_with_retry(filter_body)
+                            if success:
+                                filters_created += 1
+                                if log_callback:
+                                    log_callback(f"   ✅ Created filter: subject '{keyword}' → {category}")
+                    
+                    except Exception as e:
+                        error_msg = str(e)
+                        if '403' in error_msg and 'insufficient' in error_msg.lower():
+                            if log_callback and filters_created == 0:  # Only log scope issues once
+                                log_callback(f"   ❌ Insufficient permissions for filter creation")
+                            break  # Stop trying if we have scope issues
+                        continue
+            
+            if log_callback:
+                log_callback(f"✅ Gmail filters setup complete! Created {filters_created} new filters")
+                log_callback("   Future emails will be automatically categorized")
+                
+        except Exception as e:
+            if log_callback:
+                log_callback(f"❌ Error setting up Gmail filters: {str(e)}")
+    
+    def _create_filter_with_retry(self, filter_body, max_retries=3):
+        """Create a Gmail filter with retry logic for rate limiting."""
+        import time
+        
+        for attempt in range(max_retries):
+            try:
+                self.service.users().settings().filters().create(
+                    userId='me',
+                    body=filter_body
+                ).execute()
+                return True
+            except Exception as e:
+                error_msg = str(e)
+                if '403' in error_msg:
+                    return False  # Permission issue, don't retry
+                elif '429' in error_msg or 'rate' in error_msg.lower():
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                        continue
+                elif attempt < max_retries - 1:
+                    time.sleep(1)  # Brief pause for other errors
+                    continue
+                return False
+        return False
+    
+    def apply_suggested_filters(self, suggested_filters, log_callback=None):
+        """Apply Gmail filters suggested by Gemini analysis."""
+        if log_callback:
+            log_callback("🔧 Creating Gmail filters from Gemini suggestions...")
+        
+        filters_created = 0
+        
+        try:
+            for category, filters in suggested_filters.items():
+                if category == 'INBOX':  # Skip INBOX filters
+                    continue
+                
+                # Create label if it doesn't exist
+                label_id = self.create_label_if_not_exists(category)
+                if not label_id:
+                    if log_callback:
+                        log_callback(f"   ⚠️ Skipping {category} - couldn't create label")
+                    continue
+                
+                for filter_spec in filters:
+                    try:
+                        # Build filter criteria
+                        criteria = {}
+                        if 'from' in filter_spec:
+                            criteria['from'] = filter_spec['from']
+                        if 'subject' in filter_spec:
+                            criteria['subject'] = filter_spec['subject']
+                        
+                        # Build filter action based on action type
+                        action = {}
+                        action_type = filter_spec.get('action', 'label_and_archive')
+                        
+                        if action_type == 'label_and_archive':
+                            action = {
+                                'addLabelIds': [label_id],
+                                'removeLabelIds': ['INBOX']
+                            }
+                        elif action_type == 'label_only':
+                            action = {
+                                'addLabelIds': [label_id]
+                            }
+                        elif action_type == 'spam':
+                            action = {
+                                'addLabelIds': [label_id],
+                                'removeLabelIds': ['INBOX'],
+                                'markAsSpam': True
+                            }
+                        
+                        # Check if filter already exists
+                        existing_filters = self.service.users().settings().filters().list(userId='me').execute()
+                        filter_exists = False
+                        
+                        for existing_filter in existing_filters.get('filter', []):
+                            existing_criteria = existing_filter.get('criteria', {})
+                            if (existing_criteria.get('from') == criteria.get('from') and 
+                                existing_criteria.get('subject') == criteria.get('subject')):
+                                filter_exists = True
+                                break
+                        
+                        if not filter_exists:
+                            filter_body = {
+                                'criteria': criteria,
+                                'action': action
+                            }
+                            
+                            # Create filter with retry logic
+                            success = self._create_filter_with_retry(filter_body)
+                            if success:
+                                filters_created += 1
+                                
+                                # Create descriptive log message
+                                filter_desc = []
+                                if 'from' in criteria:
+                                    filter_desc.append(f"from:{criteria['from']}")
+                                if 'subject' in criteria:
+                                    filter_desc.append(f"subject:{criteria['subject']}")
+                                
+                                if log_callback:
+                                    log_callback(f"   ✅ Created filter: {' AND '.join(filter_desc)} → {category}")
+                            else:
+                                if log_callback and filters_created == 0:  # Only log scope issues once
+                                    log_callback(f"   ❌ Filter creation failed - check OAuth permissions")
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        if '403' in error_msg and 'insufficient' in error_msg.lower():
+                            if log_callback and filters_created == 0:  # Only log scope issues once
+                                log_callback(f"   ❌ Insufficient permissions for filter creation")
+                            break  # Stop trying if we have scope issues
+                        continue
+            
+            if log_callback:
+                log_callback(f"✅ Created {filters_created} Gmail filters from Gemini suggestions")
+                if filters_created > 0:
+                    log_callback("   Future emails will be automatically categorized!")
+                    
+        except Exception as e:
+            if log_callback:
+                log_callback(f"❌ Error applying suggested filters: {str(e)}")
+    
     def get_available_models(self):
         """Get list of available models from LM Studio."""
         try:
@@ -211,68 +581,57 @@ class GmailLMCleaner:
             return []
     
     def analyze_email_with_llm(self, email_data):
-        """Use LM Studio to analyze email with strict filtering."""
-        # Pre-filter based on settings
-        if email_data['sender'] in self.settings['never_delete_senders']:
-            return {"action": "KEEP", "reason": "Sender is in never-delete list"}
-        
-        if email_data['sender'] in self.settings['auto_delete_senders']:
-            return {"action": "DELETE", "reason": "Sender is in auto-delete list"}
-        
-        # Only keep in INBOX if TRULY urgent (strict keyword matching)
-        if self.is_important_email(email_data):
-            return {"action": "INBOX", "reason": "Contains critical security/account keywords"}
-        
-        # Check for promotional content - move to shopping or junk
-        if self.is_promotional_email(email_data):
-            return {"action": "SHOPPING", "reason": "Promotional email - moved to shopping folder"}
-        
-        # Build organizational prompt for LLM
-        lm_studio_prompts = self.llm_prompts.get("lm_studio", {})
-        system_message = lm_studio_prompts.get("system_message", "You are a conservative email management assistant. When in doubt, keep the email. Always respond with valid JSON.")
-        organization_prompt_template = lm_studio_prompts.get("organization_prompt", "")
-
-        if not organization_prompt_template:
-            return {"action": "KEEP", "reason": "LM Studio organization prompt not found in settings."}
-
-        prompt = organization_prompt_template.format(email_data=email_data)
- 
+        """Enhanced LLM analysis with better error handling."""
         try:
-            # Prepare request payload
-            payload = {
-                "messages": [
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.1,  # More conservative
-                "max_tokens": 100
+            # Pre-validation
+            if not isinstance(email_data, dict):
+                return {"action": "KEEP", "reason": "Invalid email data format"}
+            
+            # Validate email_data has required fields
+            required_fields = ['subject', 'sender', 'body', 'date']
+            for field in required_fields:
+                if field not in email_data:
+                    return {"action": "KEEP", "reason": f"Missing required field: {field}"}
+            
+            # Pre-filter based on settings
+            sender = email_data.get('sender', '').lower()
+            
+            if any(never_delete in sender for never_delete in self.settings['never_delete_senders']):
+                return {"action": "KEEP", "reason": "Sender in never-delete list"}
+            
+            if any(auto_delete in sender for auto_delete in self.settings['auto_delete_senders']):
+                return {"action": "JUNK", "reason": "Sender in auto-delete list"}
+            
+            # Check importance
+            if self.is_important_email(email_data):
+                return {"action": "INBOX", "reason": "Contains important keywords"}
+            
+            # Check for promotional content
+            if self.is_promotional_email(email_data):
+                return {"action": "SHOPPING", "reason": "Promotional email"}
+            
+            # Prepare safe data for LLM
+            safe_email_data = {
+                'subject': str(email_data.get('subject', 'No Subject'))[:200],
+                'sender': str(email_data.get('sender', 'Unknown'))[:100],
+                'body_preview': str(email_data.get('body', ''))[:500],
+                'date': str(email_data.get('date', 'Unknown'))[:50]
             }
             
-            # Add model selection if specified
-            model_name = self.settings.get('lm_studio_model', 'auto')
-            if model_name and model_name != 'auto':
-                payload['model'] = model_name
+            # Build LLM prompt
+            prompt = self.build_categorization_prompt(safe_email_data)
             
-            response = requests.post(
-                LM_STUDIO_URL,
-                json=payload,
-                timeout=30
-            )
+            # Call LLM with timeout
+            decision = self.call_lm_studio(prompt, timeout=10)
             
-            if response.status_code == 200:
-                result = response.json()
-                content = result['choices'][0]['message']['content']
-                
-                try:
-                    decision = json.loads(content)
-                    return decision
-                except json.JSONDecodeError:
-                    return {"action": "KEEP", "reason": "Unable to parse LLM response"}
+            return self.validate_llm_decision(decision)
+            
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"LLM analysis error: {str(e)}")
             else:
-                return {"action": "KEEP", "reason": "LLM request failed"}
-                
-        except requests.exceptions.RequestException as e:
-            return {"action": "KEEP", "reason": "LLM not available"}
+                print(f"LLM analysis error: {str(e)}")
+            return {"action": "KEEP", "reason": f"Analysis error: {str(e)}"}
     
     def create_label_if_not_exists(self, label_name):
         """Create a Gmail label if it doesn't exist."""
@@ -301,7 +660,10 @@ class GmailLMCleaner:
             return created_label['id']
             
         except Exception as e:
-            print(f"Error creating label {label_name}: {e}")
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Error creating label {label_name}: {e}")
+            else:
+                print(f"Error creating label {label_name}: {e}")
             return None
  
     def execute_action(self, email_id, action, reason, log_callback=None):
@@ -367,12 +729,20 @@ class GmailLMCleaner:
                 log_callback(f"  ✗ Error executing action: {e}")
     
     def process_inbox(self, log_callback=None):
-        """Process emails from the inbox."""
+        """Process emails from the inbox in newest to oldest order."""
         if log_callback:
-            log_callback(f"🔍 Searching for emails from the last {self.settings['days_back']} days...")
+            log_callback(f"🔍 Processing inbox emails (newest first)...")
         
-        date_after = (datetime.now() - timedelta(days=self.settings['days_back'])).strftime('%Y/%m/%d')
-        query = f'in:inbox after:{date_after}'
+        # Focus on inbox only, newest first - no date restriction unless specified
+        if self.settings.get('days_back', 0) > 0:
+            date_after = (datetime.now() - timedelta(days=self.settings['days_back'])).strftime('%Y/%m/%d')
+            query = f'in:inbox after:{date_after}'
+            if log_callback:
+                log_callback(f"   Filtering to last {self.settings['days_back']} days")
+        else:
+            query = 'in:inbox'
+            if log_callback:
+                log_callback(f"   Processing all inbox emails")
         
         try:
             results = self.service.users().messages().list(
@@ -406,6 +776,15 @@ class GmailLMCleaner:
                     log_callback(f"  From: {sender_text}")
                 
                 decision = self.analyze_email_with_llm(email_data)
+                
+                # Log the processing details
+                if hasattr(self, 'logger'):
+                    self.log_email_processing(
+                        email_data['id'],
+                        email_data.get('subject', 'No Subject'),
+                        decision['action'],
+                        decision['reason']
+                    )
                 
                 self.execute_action(
                     email_data['id'],
@@ -576,13 +955,12 @@ class GmailLMCleaner:
             # Update label schema if specified
             if 'label_schema' in rules:
                 try:
-                    gmail_service = get_gmail_service()
-                    if gmail_service:
-                        gmail_label_manager = GmailLabelManager(gmail_service)
-                        gmail_label_manager.refresh_label_cache()
-                        update_label_schema(gmail_label_manager, rules['label_schema'], logger)
-                        if log_callback:
-                            log_callback("✅ Label schema updated")
+                    # Use existing authenticated service instead of creating new one
+                    gmail_label_manager = GmailLabelManager(self.service)
+                    gmail_label_manager.refresh_label_cache()
+                    update_label_schema(gmail_label_manager, rules['label_schema'], logger)
+                    if log_callback:
+                        log_callback("✅ Label schema updated")
                 except Exception as e:
                     if log_callback:
                         log_callback(f"⚠️ Label schema update failed: {e}")
@@ -625,6 +1003,15 @@ class GmailLMCleaner:
                     if log_callback:
                         log_callback(f"⚠️ Label action mappings update failed: {e}")
                     logger.error(f"Label action mappings update failed: {e}")
+            
+            # Apply suggested Gmail filters from Gemini
+            if 'suggested_gmail_filters' in rules:
+                try:
+                    self.apply_suggested_filters(rules['suggested_gmail_filters'], log_callback)
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"⚠️ Gmail filters creation failed: {e}")
+                    logger.error(f"Gmail filters creation failed: {e}")
             
             # Save updated settings
             self.save_settings()
@@ -706,6 +1093,7 @@ class GmailCleanerGUI:
         control_frame.pack(fill=tk.X, padx=10, pady=5)
         
         ttk.Button(control_frame, text="Connect to Gmail", command=self.connect_gmail).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Setup Gmail Filters", command=self.setup_filters).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Process Emails", command=self.process_emails).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Export Subjects", command=self.export_subjects).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Auto-Analyze with Gemini", command=self.auto_analyze).pack(side=tk.LEFT, padx=5)
@@ -984,6 +1372,26 @@ class GmailCleanerGUI:
             
         except Exception as e:
             self.log(f"Error during auto-analysis: {e}")
+    
+    def setup_filters(self):
+        """Setup Gmail filters based on current settings."""
+        if not self.cleaner:
+            messagebox.showwarning("Warning", "Please connect to Gmail first")
+            return
+        
+        # Clear log
+        self.log_text.delete(1.0, tk.END)
+        
+        # Start filter setup in thread to avoid freezing UI
+        threading.Thread(target=self._setup_filters_thread, daemon=True).start()
+    
+    def _setup_filters_thread(self):
+        """Thread function for setting up Gmail filters."""
+        try:
+            self.log("🔧 Setting up Gmail filters based on current rules...")
+            self.cleaner.setup_gmail_filters(log_callback=self.log)
+        except Exception as e:
+            self.log(f"Error setting up filters: {e}")
     
     def show_confirmation_dialog(self, proposed_rules):
         """Show confirmation dialog with proposed changes from Gemini."""
