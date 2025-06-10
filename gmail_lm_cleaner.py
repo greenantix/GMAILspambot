@@ -1,0 +1,891 @@
+#!/usr/bin/env python3
+"""
+Gmail Intelligent Cleaner with GUI
+This script uses a local LLM via LM Studio to intelligently process and clean your Gmail inbox.
+"""
+
+import os
+import json
+import base64
+import requests
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext
+from datetime import datetime, timedelta
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+import threading
+from dotenv import load_dotenv
+import google.generativeai as genai
+
+# If modifying these scopes, delete the token.json file.
+SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
+
+# Load environment variables
+load_dotenv()
+
+# LM Studio configuration
+LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
+
+# Gemini configuration
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+# Settings configuration
+DEFAULT_SETTINGS = {
+    "important_keywords": [
+        "security alert", "account suspended", "verify your account", "confirm your identity",
+        "password reset", "login attempt", "suspicious activity", "unauthorized access",
+        "fraud alert", "payment failed", "invoice due", "tax notice", "bank statement",
+        "urgent action required", "account expires", "verification code"
+    ],
+    "important_senders": [
+        "security@", "alerts@", "fraud@", "admin@", 
+        "billing@", "accounts@", "statements@"
+    ],
+    "promotional_keywords": [
+        "sale", "discount", "offer", "deal", "coupon", "promo", "marketing",
+        "newsletter", "unsubscribe", "shop", "buy", "limited time", "free"
+    ],
+    "auto_delete_senders": [],
+    "never_delete_senders": [],
+    "max_emails_per_run": 50,
+    "days_back": 7,
+    "dry_run": False
+}
+
+class GmailLMCleaner:
+    def __init__(self, credentials_file='credentials.json', token_file='token.json', settings_file='settings.json'):
+        self.credentials_file = credentials_file
+        self.token_file = token_file
+        self.settings_file = settings_file
+        self.service = None
+        self.settings = self.load_settings()
+        self.setup_gmail_service()
+        
+    def load_settings(self):
+        """Load settings from file or create default."""
+        if os.path.exists(self.settings_file):
+            try:
+                with open(self.settings_file, 'r') as f:
+                    settings = json.load(f)
+                    # Merge with defaults in case new settings were added
+                    for key, value in DEFAULT_SETTINGS.items():
+                        if key not in settings:
+                            settings[key] = value
+                    return settings
+            except:
+                pass
+        return DEFAULT_SETTINGS.copy()
+    
+    def save_settings(self):
+        """Save current settings to file."""
+        with open(self.settings_file, 'w') as f:
+            json.dump(self.settings, f, indent=2)
+        
+    def setup_gmail_service(self):
+        """Authenticate and create Gmail service instance."""
+        creds = None
+        
+        if os.path.exists(self.token_file):
+            creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
+        
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    self.credentials_file, SCOPES)
+                creds = flow.run_local_server(port=0)
+            
+            with open(self.token_file, 'w') as token:
+                token.write(creds.to_json())
+        
+        self.service = build('gmail', 'v1', credentials=creds)
+    
+    def get_email_content(self, msg_id):
+        """Fetch and decode email content."""
+        try:
+            message = self.service.users().messages().get(
+                userId='me', 
+                id=msg_id,
+                format='full'
+            ).execute()
+            
+            headers = message['payload']['headers']
+            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
+            sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown Sender')
+            date = next((h['value'] for h in headers if h['name'] == 'Date'), 'Unknown Date')
+            
+            body = self.extract_body(message['payload'])
+            
+            return {
+                'id': msg_id,
+                'subject': subject,
+                'sender': sender,
+                'date': date,
+                'body': body[:1000],
+                'labels': message.get('labelIds', [])
+            }
+        except Exception as e:
+            print(f"Error fetching email {msg_id}: {e}")
+            return None
+    
+    def extract_body(self, payload):
+        """Extract email body from payload."""
+        body = ""
+        
+        if 'parts' in payload:
+            for part in payload['parts']:
+                if part['mimeType'] == 'text/plain':
+                    data = part['body']['data']
+                    body = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
+                    break
+        elif payload['body'].get('data'):
+            body = base64.urlsafe_b64decode(
+                payload['body']['data']).decode('utf-8', errors='ignore')
+        
+        return body
+    
+    def is_important_email(self, email_data):
+        """Check if email contains important keywords or is from important sender."""
+        subject_lower = email_data['subject'].lower()
+        sender_lower = email_data['sender'].lower()
+        body_lower = email_data['body'].lower()
+        
+        # Check important keywords
+        for keyword in self.settings['important_keywords']:
+            if keyword.lower() in subject_lower or keyword.lower() in body_lower:
+                return True
+        
+        # Check important senders
+        for sender_pattern in self.settings['important_senders']:
+            if sender_pattern.lower() in sender_lower:
+                return True
+        
+        return False
+    
+    def is_promotional_email(self, email_data):
+        """Check if email is promotional."""
+        subject_lower = email_data['subject'].lower()
+        body_lower = email_data['body'].lower()
+        
+        promo_count = 0
+        for keyword in self.settings['promotional_keywords']:
+            if keyword.lower() in subject_lower or keyword.lower() in body_lower:
+                promo_count += 1
+        
+        return promo_count >= 2  # Require at least 2 promotional keywords
+    
+    def analyze_email_with_llm(self, email_data):
+        """Use LM Studio to analyze email with strict filtering."""
+        # Pre-filter based on settings
+        if email_data['sender'] in self.settings['never_delete_senders']:
+            return {"action": "KEEP", "reason": "Sender is in never-delete list"}
+        
+        if email_data['sender'] in self.settings['auto_delete_senders']:
+            return {"action": "DELETE", "reason": "Sender is in auto-delete list"}
+        
+        # Only keep in INBOX if TRULY urgent (strict keyword matching)
+        if self.is_important_email(email_data):
+            return {"action": "INBOX", "reason": "Contains critical security/account keywords"}
+        
+        # Check for promotional content - move to shopping or junk
+        if self.is_promotional_email(email_data):
+            return {"action": "SHOPPING", "reason": "Promotional email - moved to shopping folder"}
+        
+        # Build organizational prompt for LLM
+        prompt = f"""You are an email organization assistant. Analyze this email and categorize it.
+
+ORGANIZATION RULES:
+- INBOX: Only for URGENT emails needing immediate attention (security alerts, verification codes, payment failures, account issues)
+- BILLS: Receipts, invoices, payment confirmations, bank statements, tax documents
+- SHOPPING: Order confirmations, shipping updates, product launches, store promotions
+- NEWSLETTERS: Newsletters, tech updates, news digests, educational content
+- SOCIAL: Social media notifications, gaming updates, app notifications
+- PERSONAL: Personal messages, scheduling, real estate, housing
+- JUNK: Obvious spam, irrelevant promotions, suspicious emails
+
+Email details:
+Subject: {email_data['subject']}
+From: {email_data['sender']}
+Body preview: {email_data['body'][:500]}
+
+Choose ONE category:
+- INBOX: Urgent/critical emails only
+- BILLS: Financial/payment related
+- SHOPPING: Commerce/retail related  
+- NEWSLETTERS: Information/updates
+- SOCIAL: Social/gaming/apps
+- PERSONAL: Personal correspondence
+- JUNK: Spam/irrelevant
+
+Respond in JSON format:
+{{"action": "CATEGORY_NAME", "reason": "brief reason"}}"""
+
+        try:
+            response = requests.post(
+                LM_STUDIO_URL,
+                json={
+                    "messages": [
+                        {"role": "system", "content": "You are a conservative email management assistant. When in doubt, keep the email. Always respond with valid JSON."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.1,  # More conservative
+                    "max_tokens": 100
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['message']['content']
+                
+                try:
+                    decision = json.loads(content)
+                    return decision
+                except json.JSONDecodeError:
+                    return {"action": "KEEP", "reason": "Unable to parse LLM response"}
+            else:
+                return {"action": "KEEP", "reason": "LLM request failed"}
+                
+        except requests.exceptions.RequestException as e:
+            return {"action": "KEEP", "reason": "LLM not available"}
+    
+    def create_label_if_not_exists(self, label_name):
+        """Create a Gmail label if it doesn't exist."""
+        try:
+            # Get existing labels
+            results = self.service.users().labels().list(userId='me').execute()
+            labels = results.get('labels', [])
+            
+            # Check if label exists
+            for label in labels:
+                if label['name'] == label_name:
+                    return label['id']
+            
+            # Create new label
+            label_object = {
+                'name': label_name,
+                'labelListVisibility': 'labelShow',
+                'messageListVisibility': 'show'
+            }
+            
+            created_label = self.service.users().labels().create(
+                userId='me', 
+                body=label_object
+            ).execute()
+            
+            return created_label['id']
+            
+        except Exception as e:
+            print(f"Error creating label {label_name}: {e}")
+            return None
+
+    def execute_action(self, email_id, action, reason, log_callback=None):
+        """Execute the decided action on the email."""
+        try:
+            if self.settings['dry_run']:
+                if log_callback:
+                    log_callback(f"  [DRY RUN] Would move to {action}: {reason}")
+                return
+            
+            if action == "JUNK":
+                # Move to trash
+                self.service.users().messages().trash(
+                    userId='me',
+                    id=email_id
+                ).execute()
+                if log_callback:
+                    log_callback(f"  🗑️ Moved to trash: {reason}")
+                
+            elif action == "INBOX":
+                # Keep in inbox, add important label
+                self.service.users().messages().modify(
+                    userId='me',
+                    id=email_id,
+                    body={'addLabelIds': ['IMPORTANT']}
+                ).execute()
+                if log_callback:
+                    log_callback(f"  📥 Kept in inbox: {reason}")
+                
+            else:
+                # Move to appropriate folder/label
+                label_id = self.create_label_if_not_exists(action)
+                
+                if label_id:
+                    # Remove from inbox and add to category label
+                    self.service.users().messages().modify(
+                        userId='me',
+                        id=email_id,
+                        body={
+                            'removeLabelIds': ['INBOX'],
+                            'addLabelIds': [label_id]
+                        }
+                    ).execute()
+                    
+                    folder_emoji = {
+                        'BILLS': '💰',
+                        'SHOPPING': '🛒', 
+                        'NEWSLETTERS': '📰',
+                        'SOCIAL': '👥',
+                        'PERSONAL': '📧'
+                    }
+                    
+                    emoji = folder_emoji.get(action, '📁')
+                    
+                    if log_callback:
+                        log_callback(f"  {emoji} Moved to {action}: {reason}")
+                else:
+                    if log_callback:
+                        log_callback(f"  ✗ Failed to create label for {action}")
+                
+        except Exception as e:
+            if log_callback:
+                log_callback(f"  ✗ Error executing action: {e}")
+    
+    def process_inbox(self, log_callback=None):
+        """Process emails from the inbox."""
+        if log_callback:
+            log_callback(f"🔍 Searching for emails from the last {self.settings['days_back']} days...")
+        
+        date_after = (datetime.now() - timedelta(days=self.settings['days_back'])).strftime('%Y/%m/%d')
+        query = f'in:inbox after:{date_after}'
+        
+        try:
+            results = self.service.users().messages().list(
+                userId='me',
+                q=query,
+                maxResults=self.settings['max_emails_per_run']
+            ).execute()
+            
+            messages = results.get('messages', [])
+            
+            if not messages:
+                if log_callback:
+                    log_callback('No messages found.')
+                return
+            
+            if log_callback:
+                log_callback(f"📧 Found {len(messages)} emails to process\n")
+            
+            for i, msg in enumerate(messages, 1):
+                if log_callback:
+                    log_callback(f"[{i}/{len(messages)}] Processing email...")
+                
+                email_data = self.get_email_content(msg['id'])
+                if not email_data:
+                    continue
+                
+                if log_callback:
+                    log_callback(f"  Subject: {email_data['subject'][:60]}...")
+                    log_callback(f"  From: {email_data['sender']}")
+                
+                decision = self.analyze_email_with_llm(email_data)
+                
+                self.execute_action(
+                    email_data['id'], 
+                    decision['action'], 
+                    decision['reason'],
+                    log_callback
+                )
+            
+            if log_callback:
+                log_callback("\n✅ Email processing complete!")
+            
+        except Exception as e:
+            if log_callback:
+                log_callback(f'An error occurred: {e}')
+    
+    def export_subjects(self, max_emails=1000, days_back=30, output_file='email_subjects.txt'):
+        """Export email subjects for analysis."""
+        print(f"🔍 Exporting up to {max_emails} email subjects from the last {days_back} days...")
+        
+        # Use absolute path if not already absolute
+        if not os.path.isabs(output_file):
+            output_file = os.path.abspath(output_file)
+        
+        print(f"📁 Output file: {output_file}")
+        
+        date_after = (datetime.now() - timedelta(days=days_back)).strftime('%Y/%m/%d')
+        query = f'in:inbox after:{date_after}'
+        print(f"📧 Query: {query}")
+        
+        try:
+            results = self.service.users().messages().list(
+                userId='me',
+                q=query,
+                maxResults=max_emails
+            ).execute()
+            
+            messages = results.get('messages', [])
+            
+            if not messages:
+                print('No messages found.')
+                return
+            
+            print(f"📧 Found {len(messages)} emails to export")
+            
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(f"Email Subjects Export - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Total emails: {len(messages)}\n")
+                f.write("=" * 80 + "\n\n")
+                f.flush()  # Force write to disk
+                
+                print(f"📝 Writing to file: {output_file}")
+                
+                for i, msg in enumerate(messages, 1):
+                    try:
+                        message = self.service.users().messages().get(
+                            userId='me', 
+                            id=msg['id'],
+                            format='metadata',
+                            metadataHeaders=['Subject', 'From', 'Date']
+                        ).execute()
+                        
+                        headers = message['payload']['headers']
+                        subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
+                        sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown Sender')
+                        date = next((h['value'] for h in headers if h['name'] == 'Date'), 'Unknown Date')
+                        
+                        f.write(f"{i:4d}. Subject: {subject}\n")
+                        f.write(f"      From: {sender}\n")
+                        f.write(f"      Date: {date}\n\n")
+                        f.flush()  # Flush after each write
+                        
+                        if i % 100 == 0:
+                            print(f"  Processed {i}/{len(messages)} emails...")
+                            
+                    except Exception as e:
+                        print(f"  Error processing email {i}: {e}")
+                        continue
+            
+            print(f"✅ Export complete! Saved to {output_file}")
+            print(f"\nYou can now upload this file to Gemini and ask:")
+            print(f"'Analyze these {len(messages)} email subjects and create better filtering rules'")
+            print(f"'Categorize them into: INBOX (urgent only), BILLS, SHOPPING, NEWSLETTERS, SOCIAL, PERSONAL, JUNK'")
+            
+        except Exception as e:
+            print(f'Export error: {e}')
+    
+    def analyze_with_gemini(self, subjects_file='email_subjects.txt'):
+        """Use Gemini to analyze email subjects and generate filtering rules."""
+        if not GEMINI_API_KEY:
+            print("❌ GEMINI_API_KEY not found in .env file")
+            return None
+        
+        if not os.path.exists(subjects_file):
+            print(f"❌ Subjects file {subjects_file} not found")
+            return None
+        
+        print("🤖 Analyzing email subjects with Gemini...")
+        
+        try:
+            # Read the subjects file
+            with open(subjects_file, 'r', encoding='utf-8') as f:
+                subjects_content = f.read()
+            
+            # Create the analysis prompt
+            prompt = f"""Analyze these email subjects and create comprehensive filtering rules for an email management system.
+
+{subjects_content}
+
+Based on these email subjects, create filtering rules in JSON format with these categories:
+
+1. **INBOX** - Only for URGENT emails needing immediate attention (security alerts, verification codes, payment failures, account issues)
+2. **BILLS** - Receipts, invoices, payment confirmations, bank statements, tax documents
+3. **SHOPPING** - Order confirmations, shipping updates, product launches, store promotions
+4. **NEWSLETTERS** - Newsletters, tech updates, news digests, educational content
+5. **SOCIAL** - Social media notifications, gaming updates, app notifications
+6. **PERSONAL** - Personal messages, scheduling, real estate, housing
+7. **JUNK** - Obvious spam, irrelevant promotions, suspicious emails
+
+Create filtering rules with:
+- **important_keywords**: Critical phrases that keep emails in INBOX
+- **important_senders**: Email patterns for critical senders
+- **category_keywords**: Keywords that indicate specific categories
+- **sender_patterns**: Sender patterns for each category
+- **auto_delete_senders**: Senders to always delete
+
+Respond with ONLY valid JSON in this format:
+{{
+  "important_keywords": ["security alert", "verification code", ...],
+  "important_senders": ["security@", "alerts@", ...],
+  "category_rules": {{
+    "BILLS": {{
+      "keywords": ["receipt", "invoice", ...],
+      "senders": ["billing@", "statements@", ...]
+    }},
+    "SHOPPING": {{
+      "keywords": ["order confirmation", "shipped", ...],
+      "senders": ["orders@", "shipping@", ...]
+    }},
+    "NEWSLETTERS": {{
+      "keywords": ["newsletter", "digest", ...],
+      "senders": ["newsletter@", "news@", ...]
+    }},
+    "SOCIAL": {{
+      "keywords": ["notification", "mentioned you", ...],
+      "senders": ["notify@", "notifications@", ...]
+    }},
+    "PERSONAL": {{
+      "keywords": ["meeting", "appointment", ...],
+      "senders": ["@gmail.com", "@outlook.com", ...]
+    }},
+    "JUNK": {{
+      "keywords": ["limited time offer", "act now", ...],
+      "senders": ["marketing@", "promo@", ...]
+    }}
+  }},
+  "auto_delete_senders": ["spam@example.com", ...]
+}}"""
+            
+            # Initialize Gemini model
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # Generate response
+            response = model.generate_content(prompt)
+            
+            # Parse JSON response
+            try:
+                rules = json.loads(response.text)
+                print("✅ Gemini analysis complete!")
+                return rules
+            except json.JSONDecodeError:
+                print("❌ Failed to parse Gemini response as JSON")
+                print("Raw response:", response.text[:500] + "...")
+                return None
+                
+        except Exception as e:
+            print(f"❌ Gemini analysis error: {e}")
+            return None
+    
+    def apply_gemini_rules(self, rules):
+        """Apply filtering rules generated by Gemini."""
+        if not rules:
+            print("❌ No rules to apply")
+            return
+        
+        print("🔧 Applying Gemini-generated filtering rules...")
+        
+        # Update important keywords and senders
+        if 'important_keywords' in rules:
+            self.settings['important_keywords'] = rules['important_keywords']
+        
+        if 'important_senders' in rules:
+            self.settings['important_senders'] = rules['important_senders']
+        
+        # Store category rules for advanced filtering
+        if 'category_rules' in rules:
+            self.settings['category_rules'] = rules['category_rules']
+        
+        # Update auto-delete list
+        if 'auto_delete_senders' in rules:
+            self.settings['auto_delete_senders'] = rules['auto_delete_senders']
+        
+        # Save updated settings
+        self.save_settings()
+        print("✅ Filtering rules updated and saved!")
+    
+    def export_and_analyze(self, max_emails=1000, days_back=30):
+        """Export subjects and automatically analyze with Gemini."""
+        print("🚀 Starting automatic email analysis...")
+        
+        # Export subjects
+        self.export_subjects(max_emails, days_back)
+        
+        # Analyze with Gemini
+        rules = self.analyze_with_gemini()
+        
+        if rules:
+            # Apply the rules
+            self.apply_gemini_rules(rules)
+            print("\n🎉 Automatic analysis complete!")
+            print("Your email filtering rules have been updated based on Gemini's analysis.")
+        else:
+            print("\n⚠️ Analysis failed, but subjects have been exported to email_subjects.txt")
+            print("You can manually upload this file to Gemini for analysis.")
+
+class GmailCleanerGUI:
+    def __init__(self):
+        self.cleaner = None
+        self.setup_ui()
+        
+    def setup_ui(self):
+        """Create the GUI interface."""
+        self.root = tk.Tk()
+        self.root.title("Gmail Intelligent Cleaner")
+        self.root.geometry("800x600")
+        
+        # Create notebook for tabs
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Main tab
+        main_frame = ttk.Frame(notebook)
+        notebook.add(main_frame, text="Main")
+        
+        # Settings tab
+        settings_frame = ttk.Frame(notebook)
+        notebook.add(settings_frame, text="Settings")
+        
+        self.setup_main_tab(main_frame)
+        self.setup_settings_tab(settings_frame)
+        
+    def setup_main_tab(self, parent):
+        """Setup the main control tab."""
+        # Status frame
+        status_frame = ttk.LabelFrame(parent, text="Status", padding=10)
+        status_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.status_label = ttk.Label(status_frame, text="Not connected to Gmail")
+        self.status_label.pack(anchor=tk.W)
+        
+        # Control frame
+        control_frame = ttk.LabelFrame(parent, text="Controls", padding=10)
+        control_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Button(control_frame, text="Connect to Gmail", command=self.connect_gmail).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Process Emails", command=self.process_emails).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Export Subjects", command=self.export_subjects).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Auto-Analyze with Gemini", command=self.auto_analyze).pack(side=tk.LEFT, padx=5)
+        
+        # Options frame
+        options_frame = ttk.LabelFrame(parent, text="Options", padding=10)
+        options_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.dry_run_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(options_frame, text="Dry Run (don't actually modify emails)", 
+                       variable=self.dry_run_var).pack(anchor=tk.W)
+        
+        # Log frame
+        log_frame = ttk.LabelFrame(parent, text="Log", padding=10)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=15)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+    def setup_settings_tab(self, parent):
+        """Setup the settings configuration tab."""
+        # Create scrollable frame
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Important Keywords
+        keywords_frame = ttk.LabelFrame(scrollable_frame, text="Important Keywords", padding=10)
+        keywords_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(keywords_frame, text="Emails containing these keywords will always be kept:").pack(anchor=tk.W)
+        self.keywords_text = scrolledtext.ScrolledText(keywords_frame, height=5)
+        self.keywords_text.pack(fill=tk.X, pady=5)
+        
+        # Important Senders
+        senders_frame = ttk.LabelFrame(scrollable_frame, text="Important Sender Patterns", padding=10)
+        senders_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(senders_frame, text="Emails from senders matching these patterns will be kept:").pack(anchor=tk.W)
+        self.senders_text = scrolledtext.ScrolledText(senders_frame, height=3)
+        self.senders_text.pack(fill=tk.X, pady=5)
+        
+        # Never Delete
+        never_delete_frame = ttk.LabelFrame(scrollable_frame, text="Never Delete Senders", padding=10)
+        never_delete_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(never_delete_frame, text="Never delete emails from these exact senders:").pack(anchor=tk.W)
+        self.never_delete_text = scrolledtext.ScrolledText(never_delete_frame, height=3)
+        self.never_delete_text.pack(fill=tk.X, pady=5)
+        
+        # Processing Options
+        proc_frame = ttk.LabelFrame(scrollable_frame, text="Processing Options", padding=10)
+        proc_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(proc_frame, text="Days back to process:").pack(anchor=tk.W)
+        self.days_var = tk.StringVar(value="7")
+        ttk.Entry(proc_frame, textvariable=self.days_var, width=10).pack(anchor=tk.W, pady=2)
+        
+        ttk.Label(proc_frame, text="Max emails per run:").pack(anchor=tk.W)
+        self.max_emails_var = tk.StringVar(value="50")
+        ttk.Entry(proc_frame, textvariable=self.max_emails_var, width=10).pack(anchor=tk.W, pady=2)
+        
+        # Buttons
+        button_frame = ttk.Frame(scrollable_frame)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        ttk.Button(button_frame, text="Load Settings", command=self.load_settings).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Save Settings", command=self.save_settings).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Reset to Defaults", command=self.reset_settings).pack(side=tk.LEFT, padx=5)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+    def log(self, message):
+        """Add message to log."""
+        self.log_text.insert(tk.END, message + "\n")
+        self.log_text.see(tk.END)
+        self.root.update()
+        
+    def connect_gmail(self):
+        """Connect to Gmail service."""
+        try:
+            self.log("Connecting to Gmail...")
+            self.cleaner = GmailLMCleaner()
+            self.status_label.config(text="✓ Connected to Gmail")
+            self.log("✓ Gmail connection successful")
+        except Exception as e:
+            self.status_label.config(text="✗ Connection failed")
+            self.log(f"✗ Gmail connection failed: {e}")
+            messagebox.showerror("Error", f"Failed to connect to Gmail: {e}")
+    
+    def process_emails(self):
+        """Process emails in a separate thread."""
+        if not self.cleaner:
+            messagebox.showwarning("Warning", "Please connect to Gmail first")
+            return
+        
+        self.cleaner.settings['dry_run'] = self.dry_run_var.get()
+        
+        # Clear log
+        self.log_text.delete(1.0, tk.END)
+        
+        # Start processing in thread to avoid freezing UI
+        threading.Thread(target=self._process_emails_thread, daemon=True).start()
+    
+    def _process_emails_thread(self):
+        """Thread function for processing emails."""
+        try:
+            self.cleaner.process_inbox(log_callback=self.log)
+        except Exception as e:
+            self.log(f"Error processing emails: {e}")
+    
+    def export_subjects(self):
+        """Export email subjects for analysis."""
+        if not self.cleaner:
+            messagebox.showwarning("Warning", "Please connect to Gmail first")
+            return
+        
+        # Clear log
+        self.log_text.delete(1.0, tk.END)
+        
+        # Start export in thread to avoid freezing UI
+        threading.Thread(target=self._export_subjects_thread, daemon=True).start()
+    
+    def _export_subjects_thread(self):
+        """Thread function for exporting subjects."""
+        try:
+            self.log("🔍 Starting email subjects export...")
+            self.cleaner.export_subjects(max_emails=1000, days_back=30)
+            self.log("✅ Export complete! Check email_subjects.txt file")
+            self.log("\nUpload this file to Gemini and ask:")
+            self.log("'Analyze these email subjects and create better filtering rules'")
+            self.log("'Categorize into: INBOX, BILLS, SHOPPING, NEWSLETTERS, SOCIAL, PERSONAL, JUNK'")
+        except Exception as e:
+            self.log(f"Error exporting subjects: {e}")
+    
+    def auto_analyze(self):
+        """Auto-analyze emails with Gemini and update settings."""
+        if not self.cleaner:
+            messagebox.showwarning("Warning", "Please connect to Gmail first")
+            return
+        
+        if not GEMINI_API_KEY:
+            messagebox.showerror("Error", "GEMINI_API_KEY not found in .env file")
+            return
+        
+        # Clear log
+        self.log_text.delete(1.0, tk.END)
+        
+        # Start auto-analysis in thread to avoid freezing UI
+        threading.Thread(target=self._auto_analyze_thread, daemon=True).start()
+    
+    def _auto_analyze_thread(self):
+        """Thread function for auto-analyzing with Gemini."""
+        try:
+            self.log("🚀 Starting automatic email analysis with Gemini...")
+            self.cleaner.export_and_analyze(max_emails=1000, days_back=30)
+            self.log("🎉 Analysis complete! Your filtering rules have been updated.")
+            self.log("You can now process emails with the improved filters.")
+            # Reload settings in UI
+            self.load_settings()
+        except Exception as e:
+            self.log(f"Error during auto-analysis: {e}")
+    
+    def load_settings(self):
+        """Load settings into UI."""
+        if not self.cleaner:
+            self.cleaner = GmailLMCleaner()
+        
+        settings = self.cleaner.settings
+        
+        self.keywords_text.delete(1.0, tk.END)
+        self.keywords_text.insert(1.0, "\n".join(settings['important_keywords']))
+        
+        self.senders_text.delete(1.0, tk.END)
+        self.senders_text.insert(1.0, "\n".join(settings['important_senders']))
+        
+        self.never_delete_text.delete(1.0, tk.END)
+        self.never_delete_text.insert(1.0, "\n".join(settings['never_delete_senders']))
+        
+        self.days_var.set(str(settings['days_back']))
+        self.max_emails_var.set(str(settings['max_emails_per_run']))
+        
+        self.log("Settings loaded")
+    
+    def save_settings(self):
+        """Save settings from UI."""
+        if not self.cleaner:
+            self.cleaner = GmailLMCleaner()
+        
+        # Update settings from UI
+        self.cleaner.settings['important_keywords'] = [
+            k.strip() for k in self.keywords_text.get(1.0, tk.END).strip().split('\n') if k.strip()
+        ]
+        self.cleaner.settings['important_senders'] = [
+            s.strip() for s in self.senders_text.get(1.0, tk.END).strip().split('\n') if s.strip()
+        ]
+        self.cleaner.settings['never_delete_senders'] = [
+            s.strip() for s in self.never_delete_text.get(1.0, tk.END).strip().split('\n') if s.strip()
+        ]
+        
+        try:
+            self.cleaner.settings['days_back'] = int(self.days_var.get())
+            self.cleaner.settings['max_emails_per_run'] = int(self.max_emails_var.get())
+        except ValueError:
+            messagebox.showerror("Error", "Days back and max emails must be numbers")
+            return
+        
+        self.cleaner.save_settings()
+        self.log("Settings saved")
+        messagebox.showinfo("Success", "Settings saved successfully")
+    
+    def reset_settings(self):
+        """Reset settings to defaults."""
+        if messagebox.askyesno("Confirm", "Reset all settings to defaults?"):
+            if not self.cleaner:
+                self.cleaner = GmailLMCleaner()
+            self.cleaner.settings = DEFAULT_SETTINGS.copy()
+            self.load_settings()
+            self.log("Settings reset to defaults")
+    
+    def run(self):
+        """Start the GUI."""
+        self.load_settings()
+        self.root.mainloop()
+
+def main():
+    """Main function to run the GUI."""
+    app = GmailCleanerGUI()
+    app.run()
+
+if __name__ == '__main__':
+    main()
