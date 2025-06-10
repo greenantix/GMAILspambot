@@ -63,6 +63,7 @@ class GmailLMCleaner:
         self.settings_file = settings_file
         self.service = None
         self.settings = self.load_settings()
+        self.llm_prompts = self.load_llm_prompts() # Load LLM prompts
         self.setup_gmail_service()
         
     def load_settings(self):
@@ -80,8 +81,22 @@ class GmailLMCleaner:
                 pass
         return DEFAULT_SETTINGS.copy()
     
+    def load_llm_prompts(self):
+        """Load LLM prompts from settings file."""
+        if os.path.exists(self.settings_file):
+            try:
+                with open(self.settings_file, 'r') as f:
+                    settings = json.load(f)
+                    return settings.get("llm_prompts", {})
+            except:
+                pass
+        return {}
+
     def save_settings(self):
         """Save current settings to file."""
+        # When saving, ensure llm_prompts are also saved if they were modified
+        # For this task, we assume llm_prompts are static after initial load
+        # and only modify the main settings.
         with open(self.settings_file, 'w') as f:
             json.dump(self.settings, f, indent=2)
         
@@ -109,7 +124,7 @@ class GmailLMCleaner:
         """Fetch and decode email content."""
         try:
             message = self.service.users().messages().get(
-                userId='me', 
+                userId='me',
                 id=msg_id,
                 format='full'
             ).execute()
@@ -175,7 +190,7 @@ class GmailLMCleaner:
         promo_count = 0
         for keyword in self.settings['promotional_keywords']:
             if keyword.lower() in subject_lower or keyword.lower() in body_lower:
-                promo_count += 1
+                return True
         
         return promo_count >= 2  # Require at least 2 promotional keywords
     
@@ -197,40 +212,21 @@ class GmailLMCleaner:
             return {"action": "SHOPPING", "reason": "Promotional email - moved to shopping folder"}
         
         # Build organizational prompt for LLM
-        prompt = f"""You are an email organization assistant. Analyze this email and categorize it.
+        lm_studio_prompts = self.llm_prompts.get("lm_studio", {})
+        system_message = lm_studio_prompts.get("system_message", "You are a conservative email management assistant. When in doubt, keep the email. Always respond with valid JSON.")
+        organization_prompt_template = lm_studio_prompts.get("organization_prompt", "")
 
-ORGANIZATION RULES:
-- INBOX: Only for URGENT emails needing immediate attention (security alerts, verification codes, payment failures, account issues)
-- BILLS: Receipts, invoices, payment confirmations, bank statements, tax documents
-- SHOPPING: Order confirmations, shipping updates, product launches, store promotions
-- NEWSLETTERS: Newsletters, tech updates, news digests, educational content
-- SOCIAL: Social media notifications, gaming updates, app notifications
-- PERSONAL: Personal messages, scheduling, real estate, housing
-- JUNK: Obvious spam, irrelevant promotions, suspicious emails
+        if not organization_prompt_template:
+            return {"action": "KEEP", "reason": "LM Studio organization prompt not found in settings."}
 
-Email details:
-Subject: {email_data['subject']}
-From: {email_data['sender']}
-Body preview: {email_data['body'][:500]}
-
-Choose ONE category:
-- INBOX: Urgent/critical emails only
-- BILLS: Financial/payment related
-- SHOPPING: Commerce/retail related  
-- NEWSLETTERS: Information/updates
-- SOCIAL: Social/gaming/apps
-- PERSONAL: Personal correspondence
-- JUNK: Spam/irrelevant
-
-Respond in JSON format:
-{{"action": "CATEGORY_NAME", "reason": "brief reason"}}"""
-
+        prompt = organization_prompt_template.format(email_data=email_data)
+ 
         try:
             response = requests.post(
                 LM_STUDIO_URL,
                 json={
                     "messages": [
-                        {"role": "system", "content": "You are a conservative email management assistant. When in doubt, keep the email. Always respond with valid JSON."},
+                        {"role": "system", "content": system_message},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.1,  # More conservative
@@ -274,7 +270,7 @@ Respond in JSON format:
             }
             
             created_label = self.service.users().labels().create(
-                userId='me', 
+                userId='me',
                 body=label_object
             ).execute()
             
@@ -283,7 +279,7 @@ Respond in JSON format:
         except Exception as e:
             print(f"Error creating label {label_name}: {e}")
             return None
-
+ 
     def execute_action(self, email_id, action, reason, log_callback=None):
         """Execute the decided action on the email."""
         try:
@@ -328,7 +324,7 @@ Respond in JSON format:
                     
                     folder_emoji = {
                         'BILLS': '💰',
-                        'SHOPPING': '🛒', 
+                        'SHOPPING': '🛒',
                         'NEWSLETTERS': '📰',
                         'SOCIAL': '👥',
                         'PERSONAL': '📧'
@@ -386,8 +382,8 @@ Respond in JSON format:
                 decision = self.analyze_email_with_llm(email_data)
                 
                 self.execute_action(
-                    email_data['id'], 
-                    decision['action'], 
+                    email_data['id'],
+                    decision['action'],
                     decision['reason'],
                     log_callback
                 )
@@ -424,7 +420,7 @@ Respond in JSON format:
             
             if not messages:
                 print('No messages found.')
-                return
+                return output_file # Return output_file even if no messages
             
             print(f"📧 Found {len(messages)} emails to export")
             
@@ -439,7 +435,7 @@ Respond in JSON format:
                 for i, msg in enumerate(messages, 1):
                     try:
                         message = self.service.users().messages().get(
-                            userId='me', 
+                            userId='me',
                             id=msg['id'],
                             format='metadata',
                             metadataHeaders=['Subject', 'From', 'Date']
@@ -466,9 +462,11 @@ Respond in JSON format:
             print(f"\nYou can now upload this file to Gemini and ask:")
             print(f"'Analyze these {len(messages)} email subjects and create better filtering rules'")
             print(f"'Categorize them into: INBOX (urgent only), BILLS, SHOPPING, NEWSLETTERS, SOCIAL, PERSONAL, JUNK'")
+            return output_file # Return the path to the exported file
             
         except Exception as e:
             print(f'Export error: {e}')
+            return None # Return None on error
     
     def analyze_with_gemini(self, subjects_file='email_subjects.txt'):
         """Use Gemini to analyze email subjects and generate filtering rules."""
@@ -488,59 +486,14 @@ Respond in JSON format:
                 subjects_content = f.read()
             
             # Create the analysis prompt
-            prompt = f"""Analyze these email subjects and create comprehensive filtering rules for an email management system.
+            gemini_prompts = self.llm_prompts.get("gemini", {})
+            analysis_prompt_template = gemini_prompts.get("analysis_prompt", "")
 
-{subjects_content}
+            if not analysis_prompt_template:
+                print("❌ Gemini analysis prompt not found in settings.")
+                return None
 
-Based on these email subjects, create filtering rules in JSON format with these categories:
-
-1. **INBOX** - Only for URGENT emails needing immediate attention (security alerts, verification codes, payment failures, account issues)
-2. **BILLS** - Receipts, invoices, payment confirmations, bank statements, tax documents
-3. **SHOPPING** - Order confirmations, shipping updates, product launches, store promotions
-4. **NEWSLETTERS** - Newsletters, tech updates, news digests, educational content
-5. **SOCIAL** - Social media notifications, gaming updates, app notifications
-6. **PERSONAL** - Personal messages, scheduling, real estate, housing
-7. **JUNK** - Obvious spam, irrelevant promotions, suspicious emails
-
-Create filtering rules with:
-- **important_keywords**: Critical phrases that keep emails in INBOX
-- **important_senders**: Email patterns for critical senders
-- **category_keywords**: Keywords that indicate specific categories
-- **sender_patterns**: Sender patterns for each category
-- **auto_delete_senders**: Senders to always delete
-
-Respond with ONLY valid JSON in this format:
-{{
-  "important_keywords": ["security alert", "verification code", ...],
-  "important_senders": ["security@", "alerts@", ...],
-  "category_rules": {{
-    "BILLS": {{
-      "keywords": ["receipt", "invoice", ...],
-      "senders": ["billing@", "statements@", ...]
-    }},
-    "SHOPPING": {{
-      "keywords": ["order confirmation", "shipped", ...],
-      "senders": ["orders@", "shipping@", ...]
-    }},
-    "NEWSLETTERS": {{
-      "keywords": ["newsletter", "digest", ...],
-      "senders": ["newsletter@", "news@", ...]
-    }},
-    "SOCIAL": {{
-      "keywords": ["notification", "mentioned you", ...],
-      "senders": ["notify@", "notifications@", ...]
-    }},
-    "PERSONAL": {{
-      "keywords": ["meeting", "appointment", ...],
-      "senders": ["@gmail.com", "@outlook.com", ...]
-    }},
-    "JUNK": {{
-      "keywords": ["limited time offer", "act now", ...],
-      "senders": ["marketing@", "promo@", ...]
-    }}
-  }},
-  "auto_delete_senders": ["spam@example.com", ...]
-}}"""
+            prompt = analysis_prompt_template.format(subjects_content=subjects_content)
             
             # Initialize Gemini model
             model = genai.GenerativeModel('gemini-1.5-flash')
@@ -607,7 +560,7 @@ Respond with ONLY valid JSON in this format:
         else:
             print("\n⚠️ Analysis failed, but subjects have been exported to email_subjects.txt")
             print("You can manually upload this file to Gemini for analysis.")
-
+ 
 class GmailCleanerGUI:
     def __init__(self):
         self.cleaner = None
@@ -657,7 +610,7 @@ class GmailCleanerGUI:
         options_frame.pack(fill=tk.X, padx=10, pady=5)
         
         self.dry_run_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Dry Run (don't actually modify emails)", 
+        ttk.Checkbutton(options_frame, text="Dry Run (don't actually modify emails)",
                        variable=self.dry_run_var).pack(anchor=tk.W)
         
         # Log frame
@@ -881,11 +834,11 @@ class GmailCleanerGUI:
         """Start the GUI."""
         self.load_settings()
         self.root.mainloop()
-
+ 
 def main():
     """Main function to run the GUI."""
     app = GmailCleanerGUI()
     app.run()
-
+ 
 if __name__ == '__main__':
     main()

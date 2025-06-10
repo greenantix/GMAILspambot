@@ -21,6 +21,7 @@ from typing import List, Dict, Any, Optional
 
 # Import logging config
 import log_config
+from gmail_api_utils import GmailEmailManager, get_gmail_service
 
 SETTINGS_PATH = "settings.json"
 
@@ -106,13 +107,47 @@ def print_entries(entries: List[Dict[str, Any]]):
     for entry in entries:
         print(json.dumps(entry, indent=2, ensure_ascii=False))
 
-def restore_action(entry: Dict[str, Any], logger):
-    # Stub: In real implementation, this would call Gmail API to revert the action
-    logger.info(f"Restoring action for email_id={entry.get('email_id')}, action={entry.get('action')}, label={entry.get('label')}")
-    print(f"TODO: Restore action for email_id={entry.get('email_id')} (action={entry.get('action')}, label={entry.get('label')})")
-    print("      [Gmail API call would be made here to revert the action]")
-    # TODO: Implement Gmail API call to restore/revert the action
-    # TODO: Handle edge cases (e.g., email already deleted, label missing, etc.)
+def restore_action(audit_entry: Dict[str, Any], gmail_manager: GmailEmailManager, logger):
+    """
+    Restores a Gmail action based on the audit entry.
+    """
+    email_id = audit_entry.get("email_id")
+    action_type = audit_entry.get("action")
+    label = audit_entry.get("label")
+
+    if not email_id:
+        logger.warning(f"Skipping restoration: 'email_id' not found in audit entry: {audit_entry}")
+        return
+
+    logger.info(f"Attempting to restore action for email_id={email_id}, action={action_type}, label={label}")
+
+    try:
+        if action_type == "TRASH":
+            if gmail_manager.restore_from_trash(email_id):
+                logger.info(f"Successfully restored email {email_id} from trash.")
+                print(f"Restored email {email_id} from trash.")
+            else:
+                logger.error(f"Failed to restore email {email_id} from trash.")
+                print(f"Error: Failed to restore email {email_id} from trash.")
+        elif action_type == "LABEL_AND_ARCHIVE":
+            if not label:
+                logger.warning(f"Skipping LABEL_AND_ARCHIVE restoration: 'label' not found in audit entry for email_id={email_id}")
+                print(f"Warning: Skipping LABEL_AND_ARCHIVE restoration for {email_id}: label not found.")
+                return
+
+            # To restore, add INBOX label and remove the custom label
+            if gmail_manager.modify_labels(email_id, add_labels=['INBOX'], remove_labels=[label]):
+                logger.info(f"Successfully restored email {email_id} by adding INBOX and removing label '{label}'.")
+                print(f"Restored email {email_id} by adding INBOX and removing label '{label}'.")
+            else:
+                logger.error(f"Failed to restore email {email_id} by modifying labels (add INBOX, remove '{label}').")
+                print(f"Error: Failed to restore email {email_id} by modifying labels (add INBOX, remove '{label}').")
+        else:
+            logger.warning(f"Unsupported action type for restoration: {action_type} for email_id={email_id}")
+            print(f"Warning: Unsupported action type for restoration: {action_type} for email_id={email_id}")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during restoration for email_id={email_id}: {e}")
+        print(f"Error: An unexpected error occurred during restoration for email_id={email_id}: {e}")
 
 def export_stats(entries: List[Dict[str, Any]], fmt: str):
     if fmt == "csv":
@@ -181,9 +216,22 @@ def main():
             print("No matching entries to restore.")
             logger.warning("No matching entries to restore.")
             return
+        # Initialize Gmail API service and manager
+        try:
+            gmail_service = get_gmail_service()
+            if not gmail_service:
+                logger.error("Failed to get Gmail service. Cannot proceed with restoration.")
+                print("Error: Failed to get Gmail service. Cannot proceed with restoration.")
+                return
+            gmail_manager = GmailEmailManager(gmail_service)
+        except Exception as e:
+            logger.error(f"Failed to initialize GmailEmailManager: {e}")
+            print(f"Error: Failed to initialize GmailEmailManager: {e}")
+            return
+
         for entry in filtered:
             try:
-                restore_action(entry, logger)
+                restore_action(entry, gmail_manager, logger)
             except Exception as e:
                 logger.error(f"Failed to restore action for email_id={entry.get('email_id')}: {e}")
                 print(f"Error: Failed to restore action for email_id={entry.get('email_id')}: {e}")

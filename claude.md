@@ -1,613 +1,487 @@
-# Gmail Autonomy Plan: Complete TODO Implementation
+# Fictional Project Analysis: `greenantix-gmailspambot`
 
-## 1. Executive Summary
-Current state: Core components exist but lack integration. Key gaps:
-- Gmail API label management (stubbed)
-- Autonomous runner functions (stubbed)
-- Component integration pipeline
-- Real-time processing implementation
+This document provides a detailed analysis of the `greenantix-gmailspambot` project and a roadmap for its continued development. The goal is to create a robust system for intelligently cleaning and organizing a Gmail account by leveraging both the Gemini API for high-level analysis and a local LLM for cost-effective, real-time email processing.
 
-## 2. Gmail API Integration
+## 1. Project Overview
 
-### Label Management Implementation
-```python
-# gmail_api_utils.py - NEW FILE
-from googleapiclient.errors import HttpError
+The `greenantix-gmailspambot` project is a Python-based system designed to automate the management of a Gmail inbox. It employs a dual-LLM strategy:
 
-class GmailLabelManager:
-    def __init__(self, service):
-        self.service = service
-        self._label_cache = {}
-    
-    def refresh_label_cache(self):
-        """Cache existing labels to avoid repeated API calls"""
-        results = self.service.users().labels().list(userId='me').execute()
-        self._label_cache = {label['name']: label['id'] 
-                           for label in results.get('labels', [])}
-    
-    def create_label(self, label_name, label_color=None):
-        """Create Gmail label with error handling"""
-        if label_name in self._label_cache:
-            return self._label_cache[label_name]
-        
-        label_object = {
-            'name': label_name,
-            'labelListVisibility': 'labelShow',
-            'messageListVisibility': 'show'
-        }
-        if label_color:
-            label_object['color'] = label_color
-            
-        try:
-            created = self.service.users().labels().create(
-                userId='me', body=label_object).execute()
-            self._label_cache[label_name] = created['id']
-            return created['id']
-        except HttpError as e:
-            if e.resp.status == 409:  # Already exists
-                self.refresh_label_cache()
-                return self._label_cache.get(label_name)
-            raise
-    
-    def delete_label(self, label_name):
-        """Delete Gmail label by name"""
-        label_id = self._label_cache.get(label_name)
-        if not label_id:
-            return False
-            
-        try:
-            self.service.users().labels().delete(
-                userId='me', id=label_id).execute()
-            del self._label_cache[label_name]
-            return True
-        except HttpError:
-            return False
-    
-    def rename_label(self, old_name, new_name):
-        """Rename label via delete + create + reassign"""
-        # Get emails with old label
-        old_id = self._label_cache.get(old_name)
-        if not old_id:
-            return False
-            
-        # Find affected emails
-        results = self.service.users().messages().list(
-            userId='me', labelIds=[old_id]).execute()
-        message_ids = [m['id'] for m in results.get('messages', [])]
-        
-        # Create new label
-        new_id = self.create_label(new_name)
-        
-        # Batch update messages
-        for msg_id in message_ids:
-            self.service.users().messages().modify(
-                userId='me', id=msg_id,
-                body={'addLabelIds': [new_id], 
-                      'removeLabelIds': [old_id]}
-            ).execute()
-        
-        # Delete old label
-        return self.delete_label(old_name)
+* **Gemini API:** Used for periodic, batch analysis of email subjects to generate and refine filtering rules, label schemas, and automated actions. This is a high-level, strategic function.
+* **Local LLM (via LM Studio):** Used for real-time, individual email processing based on the rules established by Gemini. This is a tactical, high-volume function designed to minimize API costs.
+
+The system is designed to be modular, configurable, and resilient, with components for automation, auditing, health checks, and manual control.
+
+### 1.1. Core Features
+
+* **Automated Rule Generation:** Uses the Gemini API to analyze email patterns and suggest new or updated filtering rules.
+* **Real-time Email Processing:** A continuous runner processes incoming emails using a local LLM.
+* **Configuration-driven:** All behaviors are controlled through a central `settings.json` file.
+* **Auditing and Restoration:** Actions taken by the system are logged, and a tool is provided to review and revert them.
+* **Health Monitoring:** A Flask-based API exposes health and status endpoints for monitoring.
+* **Manual Control & Debugging:** Includes a GUI and various scripts for manual interaction, debugging, and exporting data.
+* **Automated Setup & Management:** Shell scripts are provided for easy setup, startup, and shutdown.
+
+### 1.2. Directory Structure
+
+```
+└── greenantix-gmailspambot/
+    ├── audit_tool.py
+    ├── auto_analyze.py
+    ├── autonomous_runner.py
+    ├── cron_utils.py
+    ├── debug_export.py
+    ├── email_cleanup.py
+    ├── export_subjects.py
+    ├── gemini_config_updater.py
+    ├── gmail_api_utils.py
+    ├── gmail_lm_cleaner.py
+    ├── health_check.py
+    ├── log_config.py
+    ├── setup.sh
+    ├── start.sh
+    ├── stop.sh
+    └── .env.example
 ```
 
-### Update gemini_config_updater.py
-```python
-# Replace stub functions with actual implementation
-def update_label_schema(label_schema, service, logger):
-    """Implement actual Gmail label operations"""
-    manager = GmailLabelManager(service)
-    manager.refresh_label_cache()
-    
-    # Create labels with colors
-    label_colors = {
-        'BILLS': {'backgroundColor': '#fb4c2f', 'textColor': '#ffffff'},
-        'SHOPPING': {'backgroundColor': '#ffad47', 'textColor': '#000000'},
-        'NEWSLETTERS': {'backgroundColor': '#7986cb', 'textColor': '#ffffff'},
-        'SOCIAL': {'backgroundColor': '#33b679', 'textColor': '#ffffff'},
-        'PERSONAL': {'backgroundColor': '#673ab7', 'textColor': '#ffffff'}
-    }
-    
-    for label in label_schema.get("create", []):
-        try:
-            color = label_colors.get(label)
-            manager.create_label(label, color)
-            logger.info(f"Created label '{label}'")
-        except Exception as e:
-            logger.error(f"Failed to create label '{label}': {e}")
-    
-    for label in label_schema.get("delete", []):
-        if manager.delete_label(label):
-            logger.info(f"Deleted label '{label}'")
-        else:
-            logger.warning(f"Could not delete label '{label}'")
-    
-    for old, new in label_schema.get("rename", {}).items():
-        if manager.rename_label(old, new):
-            logger.info(f"Renamed label '{old}' to '{new}'")
-        else:
-            logger.error(f"Failed to rename '{old}' to '{new}'")
-```
+## 2. File-by-File Analysis
 
-## 3. Autonomous Runner Implementation
+### 2.1. Core Logic & Automation
 
-### Replace Stub Functions
-```python
-# autonomous_runner.py - Update stub implementations
+#### `autonomous_runner.py`
 
-import subprocess
-import shutil
+* **Purpose:** The heart of the automation. It runs as a persistent service, orchestrating both batch analysis and real-time email processing.
+* **Functionality:**
+    * Loads configuration from `settings.json`.
+    * Initializes logging via `log_config.py`.
+    * **Batch Analysis (Weekly Cron):**
+        * Triggers a batch analysis based on a cron schedule (`"0 3 * * 0"` by default).
+        * `stub_export_emails()`: Placeholder for exporting emails for analysis. **(TODO)**
+        * `stub_run_gemini_analysis()`: Placeholder for invoking Gemini to get new rules. **(TODO)**
+        * `run_gemini_config_updater()`: Calls the `gemini_config_updater.py` script to apply the new rules.
+    * **Real-time Processing (Interval-based):**
+        * Triggers email processing at a configurable minute interval.
+        * `stub_process_new_emails()`: Placeholder for processing new emails with the local LLM. **(TODO)**
+* **Key TODOs:**
+    * The core functions for exporting emails, running Gemini analysis, and processing new emails are currently stubs and need full implementation.
+    * The scheduling is a simple `time.sleep` loop, which could be replaced by the more robust `cron_utils.py` for better state management.
 
-def run_export_emails(export_dir, days_back=30, max_emails=2000):
-    """Execute actual email export"""
-    logger = get_logger(__name__)
-    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-    export_path = os.path.join(export_dir, f"emails_{timestamp}.txt")
-    
-    try:
-        cmd = [
-            sys.executable, "export_subjects.py",
-            "--max-emails", str(max_emails),
-            "--days-back", str(days_back),
-            "--output", export_path
-        ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            logger.info(f"Exported emails to {export_path}")
-            return export_path
-        else:
-            logger.error(f"Export failed: {result.stderr}")
-            return None
-    except Exception as e:
-        logger.error(f"Export error: {e}")
-        return None
+#### `gmail_lm_cleaner.py`
 
-def run_gemini_analysis(export_path, output_dir, api_key):
-    """Execute Gemini analysis on exported emails"""
-    logger = get_logger(__name__)
-    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-    output_path = os.path.join(output_dir, f"gemini_rules_{timestamp}.json")
-    
-    try:
-        # Initialize Gemini
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        # Read export file
-        with open(export_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Gemini prompt for rule generation
-        prompt = f"""Analyze these email subjects and generate filtering rules.
+* **Purpose:** A comprehensive script that includes the primary email processing logic, Gemini integration, and a Tkinter-based GUI for manual control.
+* **Functionality:**
+    * **Gmail Interaction:** Authenticates with Gmail using OAuth2, fetches emails, and extracts content.
+    * **Local LLM Analysis (`analyze_email_with_llm`):**
+        * Performs pre-filtering based on `settings.json` (important/auto-delete senders).
+        * Constructs a detailed prompt for a local LLM (via LM Studio) to categorize an email.
+        * Sends the request to `http://localhost:1234` and parses the JSON response.
+    * **Gemini Integration:**
+        * `export_subjects()`: Exports subjects and senders to a text file for analysis.
+        * `analyze_with_gemini()`: Reads the exported file, sends it to the Gemini API with a detailed prompt to generate JSON-formatted filtering rules.
+        * `apply_gemini_rules()`: Updates the local `settings.json` with the rules received from Gemini.
+    * **Action Execution:** Creates labels if they don't exist and moves/labels emails based on the LLM's decision.
+    * **GUI (`GmailCleanerGUI`):** A Tkinter GUI for connecting to Gmail, triggering processing, exporting subjects, and managing settings.
+* **Current State:** This script is the most complete and functional part of the project. It successfully implements the dual-LLM logic.
 
-{content}
+#### `auto_analyze.py`
 
-Generate a JSON response with:
-1. label_schema: Labels to create/delete/rename
-2. category_rules: Keywords and senders for each category
-3. auto_operations: Retention policies and auto-delete lists
+* **Purpose:** A command-line script to trigger the automatic analysis workflow.
+* **Functionality:**
+    * Initializes `GmailLMCleaner`.
+    * Calls the `export_and_analyze` method, which chains the subject export and Gemini analysis.
+* **Current State:** Ready to use. Serves as a headless alternative to the GUI's "Auto-Analyze" button.
 
-Categories: INBOX (urgent only), BILLS, SHOPPING, NEWSLETTERS, SOCIAL, PERSONAL, JUNK
+### 2.2. Utility & Supporting Scripts
 
-Output ONLY valid JSON."""
-        
-        response = model.generate_content(prompt)
-        rules = json.loads(response.text)
-        
-        # Save rules
-        with open(output_path, 'w') as f:
-            json.dump(rules, f, indent=2)
-        
-        logger.info(f"Gemini analysis saved to {output_path}")
-        return output_path
-        
-    except Exception as e:
-        logger.error(f"Gemini analysis failed: {e}")
-        return None
+#### `gmail_api_utils.py`
 
-def process_new_emails(settings, batch_size=50):
-    """Process new emails using LM Studio"""
-    logger = get_logger(__name__)
-    
-    try:
-        # Initialize Gmail cleaner with current settings
-        from gmail_lm_cleaner import GmailLMCleaner
-        cleaner = GmailLMCleaner(settings_file=SETTINGS_PATH)
-        
-        # Update cleaner settings from autonomous config
-        cleaner.settings.update({
-            'max_emails_per_run': batch_size,
-            'dry_run': settings.get('automation', {}).get('dry_run', False),
-            'days_back': 1  # Only process recent emails in real-time mode
-        })
-        
-        # Process inbox
-        processed_count = 0
-        cleaner.process_inbox(log_callback=lambda msg: logger.info(msg))
-        
-        logger.info(f"Processed batch of {batch_size} emails")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Email processing failed: {e}")
-        return False
-```
+* **Purpose:** Provides a set of reusable, well-structured classes and functions for all Gmail API interactions.
+* **Functionality:**
+    * `get_gmail_service()`: A **stubbed** function for OAuth2 authentication. **(CRITICAL TODO)**.
+    * `GmailLabelManager`: A class to create, delete, rename, and list labels, with caching to reduce API calls.
+    * `GmailEmailManager`: A class for all email operations, including listing, getting, trashing, deleting, restoring, archiving, and modifying labels, with support for batch operations.
+* **Current State:** The classes are well-defined, but the entire module is unusable until the `get_gmail_service` function is implemented. The logic in `gmail_lm_cleaner.py` for auth should be moved here to centralize it.
 
-## 4. Enhanced Scheduling System
+#### `gemini_config_updater.py`
 
-### Flexible Cron Parser
-```python
-# cron_utils.py - NEW FILE
-from croniter import croniter
-from datetime import datetime
+* **Purpose:** Applies the configuration changes recommended by the Gemini analysis.
+* **Functionality:**
+    * Reads a Gemini output JSON file.
+    * `update_label_schema()`: **Stubs** for creating, deleting, or renaming Gmail labels via the API. **(TODO)**
+    * `update_category_rules()`: Writes the keyword and sender rules to individual JSON files in the `rules/` directory.
+    * `update_auto_operations()`: Writes other automated rules (e.g., auto-delete) to `rules/auto_operations.json`.
+    * `update_label_action_mappings()`: Updates the main `settings.json` to map labels to actions (e.g., `TRASH`, `LABEL_AND_ARCHIVE`).
+* **Current State:** Partially implemented. It successfully updates local rule files but needs the Gmail API integration to manage labels directly.
 
-class ScheduleManager:
-    def __init__(self, settings):
-        self.settings = settings
-        self.schedules = {
-            'batch_analysis': croniter(
-                settings.get('automation', {}).get('batch_analysis_cron', '0 3 * * 0'),
-                datetime.utcnow()
-            ),
-            'realtime_processing': croniter(
-                settings.get('automation', {}).get('realtime_cron', '*/15 * * * *'),
-                datetime.utcnow()
-            ),
-            'cleanup': croniter(
-                settings.get('automation', {}).get('cleanup_cron', '0 4 * * *'),
-                datetime.utcnow()
-            )
-        }
-    
-    def get_next_run(self, job_name):
-        """Get next scheduled time for job"""
-        return self.schedules[job_name].get_next(datetime)
-    
-    def should_run_now(self, job_name, last_run=None):
-        """Check if job should run now"""
-        if last_run is None:
-            return True
-        next_run = self.schedules[job_name].get_next(datetime)
-        return datetime.utcnow() >= next_run
-```
+#### `cron_utils.py`
 
-### Update autonomous_runner.py Main Loop
-```python
-def main():
-    # Initialize components
-    settings = load_settings(SETTINGS_PATH)
-    init_logging(log_dir=settings.get("paths", {}).get("logs", "logs"))
-    logger = get_logger(__name__)
-    
-    # Initialize scheduler
-    scheduler = ScheduleManager(settings)
-    
-    # Track last runs
-    state = {
-        'last_batch_analysis': None,
-        'last_realtime': None,
-        'last_cleanup': None
-    }
-    
-    # Load state from file if exists
-    state_file = os.path.join(settings.get("paths", {}).get("data", "."), "automation_state.json")
-    if os.path.exists(state_file):
-        with open(state_file, 'r') as f:
-            saved_state = json.load(f)
-            for key in state:
-                if key in saved_state:
-                    state[key] = datetime.fromisoformat(saved_state[key])
-    
-    while True:
-        try:
-            # Batch Analysis Job
-            if scheduler.should_run_now('batch_analysis', state['last_batch_analysis']):
-                logger.info("Starting batch analysis job")
-                
-                export_path = run_export_emails(
-                    settings.get("paths", {}).get("exports", "exports"),
-                    days_back=settings.get("automation", {}).get("analysis_days_back", 30)
-                )
-                
-                if export_path and os.getenv('GEMINI_API_KEY'):
-                    gemini_output = run_gemini_analysis(
-                        export_path,
-                        settings.get("paths", {}).get("exports", "exports"),
-                        os.getenv('GEMINI_API_KEY')
-                    )
-                    
-                    if gemini_output:
-                        run_gemini_config_updater(gemini_output, SETTINGS_PATH)
-                
-                state['last_batch_analysis'] = datetime.utcnow()
-            
-            # Real-time Processing Job
-            if scheduler.should_run_now('realtime_processing', state['last_realtime']):
-                logger.info("Starting real-time processing")
-                process_new_emails(settings, batch_size=50)
-                state['last_realtime'] = datetime.utcnow()
-            
-            # Cleanup Job
-            if scheduler.should_run_now('cleanup', state['last_cleanup']):
-                logger.info("Starting cleanup job")
-                cleanup_old_emails(settings)
-                state['last_cleanup'] = datetime.utcnow()
-            
-            # Save state
-            with open(state_file, 'w') as f:
-                json.dump({k: v.isoformat() if v else None for k, v in state.items()}, f)
-            
-            # Sleep until next job
-            next_runs = [
-                scheduler.get_next_run('batch_analysis'),
-                scheduler.get_next_run('realtime_processing'),
-                scheduler.get_next_run('cleanup')
-            ]
-            sleep_until = min(next_runs)
-            sleep_seconds = max(1, (sleep_until - datetime.utcnow()).total_seconds())
-            
-            logger.debug(f"Sleeping for {sleep_seconds:.0f} seconds until next job")
-            time.sleep(min(sleep_seconds, 60))  # Wake at least every minute
-            
-        except KeyboardInterrupt:
-            logger.info("Shutdown requested")
-            break
-        except Exception as e:
-            logger.error(f"Main loop error: {e}")
-            time.sleep(60)  # Error recovery delay
-```
+* **Purpose:** A flexible utility for managing scheduled jobs with persistent state.
+* **Functionality:**
+    * Uses the `croniter` library to parse cron expressions.
+    * `CronJob` class: Represents a single job, tracks its last run time and status.
+    * `CronScheduler` class: Manages multiple `CronJob` objects, saves their state to a JSON file (`data/automation_state.json`), and can determine which jobs are due.
+* **Current State:** Fully implemented and robust. It is used by `health_check.py` but not yet by `autonomous_runner.py`, which it is designed for.
 
-## 5. Email Cleanup Implementation
+#### `log_config.py`
 
-### Add Retention Policy Enforcement
-```python
-# email_cleanup.py - NEW FILE
-def cleanup_old_emails(settings):
-    """Delete emails based on retention policies"""
-    logger = get_logger(__name__)
-    
-    try:
-        from gmail_lm_cleaner import GmailLMCleaner
-        cleaner = GmailLMCleaner()
-        
-        # Load retention rules
-        rules_path = os.path.join(
-            settings.get("paths", {}).get("rules", "rules"),
-            "auto_operations.json"
-        )
-        
-        if not os.path.exists(rules_path):
-            logger.warning("No retention rules found")
-            return
-        
-        with open(rules_path, 'r') as f:
-            auto_ops = json.load(f)
-        
-        delete_after = auto_ops.get("delete_after_days", {})
-        
-        for label, days in delete_after.items():
-            cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y/%m/%d')
-            query = f'label:{label} before:{cutoff_date}'
-            
-            results = cleaner.service.users().messages().list(
-                userId='me', q=query, maxResults=500
-            ).execute()
-            
-            messages = results.get('messages', [])
-            if messages:
-                logger.info(f"Deleting {len(messages)} old {label} emails")
-                
-                for msg in messages:
-                    try:
-                        cleaner.service.users().messages().trash(
-                            userId='me', id=msg['id']
-                        ).execute()
-                    except Exception as e:
-                        logger.error(f"Failed to delete {msg['id']}: {e}")
-        
-        # Empty trash for very old items
-        trash_cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y/%m/%d')
-        trash_query = f'in:trash before:{trash_cutoff}'
-        
-        results = cleaner.service.users().messages().list(
-            userId='me', q=trash_query, maxResults=1000
-        ).execute()
-        
-        for msg in results.get('messages', []):
-            cleaner.service.users().messages().delete(
-                userId='me', id=msg['id']
-            ).execute()
-        
-        logger.info("Cleanup complete")
-        
-    except Exception as e:
-        logger.error(f"Cleanup failed: {e}")
-```
+* **Purpose:** Centralized logging configuration.
+* **Functionality:**
+    * `init_logging()`: Sets up a logger that writes to both the console and a time-rotated file in the `logs/` directory.
+    * `get_logger()`: A helper function to get a configured logger instance from any module.
+* **Current State:** Fully implemented and used across the project.
 
-## 6. Audit Tool Gmail API Integration
+### 2.3. Monitoring & Auditing
 
-### Implement Restore Functionality
-```python
-# Update audit_tool.py restore_action function
-def restore_action(entry: Dict[str, Any], service, logger):
-    """Restore email to previous state using Gmail API"""
-    email_id = entry.get('email_id')
-    action = entry.get('action')
-    label = entry.get('label')
-    
-    if not email_id:
-        logger.error("No email_id in audit entry")
-        return False
-    
-    try:
-        if action == 'TRASH':
-            # Untrash the email
-            service.users().messages().untrash(
-                userId='me', id=email_id
-            ).execute()
-            logger.info(f"Untrashed email {email_id}")
-            
-        elif action == 'LABEL_AND_ARCHIVE':
-            # Move back to inbox and remove label
-            label_id = get_label_id(service, label)
-            if label_id:
-                service.users().messages().modify(
-                    userId='me', id=email_id,
-                    body={
-                        'addLabelIds': ['INBOX'],
-                        'removeLabelIds': [label_id]
-                    }
-                ).execute()
-                logger.info(f"Restored {email_id} to inbox, removed {label}")
-            
-        elif action == 'DELETE':
-            logger.warning(f"Cannot restore permanently deleted email {email_id}")
-            return False
-            
-        return True
-        
-    except HttpError as e:
-        if e.resp.status == 404:
-            logger.error(f"Email {email_id} not found")
-        else:
-            logger.error(f"Restore failed: {e}")
-        return False
-```
+#### `audit_tool.py`
 
-## 7. Enhanced Settings Structure
+* **Purpose:** A command-line tool for reviewing and reverting actions taken by the automation.
+* **Functionality:**
+    * Loads audit logs (JSONL format) from the path specified in `settings.json`.
+    * Provides CLI flags to filter log entries by date, action, label, etc.
+    * `restore_action()`: A **stub** function to revert a logged action (e.g., untrash an email). This requires Gmail API integration. **(TODO)**
+    * Can export filtered logs to CSV or JSON.
+* **Current State:** The filtering and display logic is complete, but the core "restore" functionality is missing.
 
-### Update settings.json Format
-```json
-{
-  "automation": {
-    "enabled": true,
-    "dry_run": false,
-    "batch_analysis_cron": "0 3 * * 0",
-    "realtime_cron": "*/15 * * * *",
-    "cleanup_cron": "0 4 * * *",
-    "analysis_days_back": 30,
-    "realtime_batch_size": 50
-  },
-  "paths": {
-    "logs": "logs",
-    "exports": "exports",
-    "rules": "rules",
-    "data": "data"
-  },
-  "gmail": {
-    "max_results_per_query": 500,
-    "rate_limit_delay": 0.1
-  },
-  "gemini": {
-    "model": "gemini-1.5-flash",
-    "temperature": 0.1,
-    "max_retries": 3
-  },
-  "lm_studio": {
-    "url": "http://localhost:1234/v1/chat/completions",
-    "timeout": 30,
-    "temperature": 0.1
-  },
-  "retention": {
-    "default_days": 365,
-    "min_days": 7,
-    "permanent_labels": ["BILLS", "IMPORTANT"]
-  },
-  "audit": {
-    "enabled": true,
-    "retention_days": 90,
-    "audit_log_path": "logs/audit.log"
-  }
-}
-```
+#### `health_check.py`
 
-## 8. System Health Monitoring
+* **Purpose:** A Flask-based web service for monitoring the system's health.
+* **Functionality:**
+    * `/health`: A simple endpoint that returns `200 OK` if the service is running.
+    * `/status`: A detailed endpoint that provides:
+        * The status of all scheduled jobs by reading the state file from `cron_utils.py`.
+        * The number of missed cron runs and the next scheduled run time.
+        * Information about the log file, including its size and last 10 lines.
+* **Current State:** Fully implemented and ready for deployment.
 
-### Add Health Check Endpoint
-```python
-# health_check.py - NEW FILE
-from flask import Flask, jsonify
-import psutil
-import os
+### 2.4. Setup & Execution Scripts
 
-app = Flask(__name__)
+#### `setup.sh`
 
-@app.route('/health')
-def health_check():
-    """System health endpoint for monitoring"""
-    try:
-        # Check process
-        pid = os.getpid()
-        process = psutil.Process(pid)
-        
-        # Check Gmail connection
-        from gmail_lm_cleaner import GmailLMCleaner
-        cleaner = GmailLMCleaner()
-        labels = cleaner.service.users().labels().list(userId='me').execute()
-        
-        # Check LM Studio
-        import requests
-        lm_status = requests.get('http://localhost:1234/v1/models', timeout=5)
-        
-        return jsonify({
-            'status': 'healthy',
-            'uptime': process.create_time(),
-            'memory_mb': process.memory_info().rss / 1024 / 1024,
-            'gmail': 'connected',
-            'lm_studio': 'online' if lm_status.ok else 'offline',
-            'last_batch': get_last_run_time('batch_analysis'),
-            'last_process': get_last_run_time('realtime_processing')
-        })
-    except Exception as e:
-        return jsonify({
-            'status': 'unhealthy',
-            'error': str(e)
-        }), 500
+* **Purpose:** An idempotent script to prepare the project environment.
+* **Functionality:**
+    * Creates a Python virtual environment.
+    * Installs dependencies from `requirements.txt` or a hardcoded list.
+    * Creates necessary directories (`logs`, `exports`, `rules`, `data`).
+    * Creates sample `systemd` unit files for running `autonomous_runner.py` and `health_check.py` as background services.
+    * Sets up a `logrotate` configuration to manage log file size.
+* **Current State:** Complete and robust. Provides clear instructions for production deployment.
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5555)
-```
+#### `start.sh` & `stop.sh`
 
-## 9. Installation & Deployment
+* **Purpose:** Simple scripts for managing the GUI application.
+* **`start.sh`:**
+    * Checks for dependencies and installs them if missing.
+    * Checks for `credentials.json` and `.env` and provides instructions if they are missing.
+    * Checks if LM Studio is running.
+    * Launches the `gmail_lm_cleaner.py` GUI.
+* **`stop.sh`:**
+    * Finds and terminates the `gmail_lm_cleaner.py` process.
+    * Cleans up temporary files.
+* **Current State:** Both scripts are complete and provide a user-friendly way to run the application on a desktop.
 
-### Complete Setup Script
-```bash
-#!/bin/bash
-# setup.sh - Complete installation
+#### `debug_export.py` & `export_subjects.py`
 
-# Install system dependencies
-sudo apt update
-sudo apt install -y python3-pip python3-venv supervisor
+* **`debug_export.py`:** A script designed to help debug issues with the Gmail API query by testing several different queries and showing sample results.
+* **`export_subjects.py`:** A CLI tool to run the subject export process independently, saving the results to a file.
+* **Current State:** Both are functional helper utilities.
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+## 3. Current Project Status & Missing Links
 
-# Install Python packages
-pip install --upgrade pip
-pip install google-auth google-auth-oauthlib google-auth-httplib2 \
-    google-api-python-client google-generativeai python-dotenv \
-    requests croniter flask psutil
+The project has a solid foundation, with many components being well-developed. However, there are critical missing links preventing it from being a fully autonomous system.
 
-# Create directory structure
-mkdir -p logs exports rules data
+### What's Working:
 
-# Set permissions
-chmod +x *.py *.sh
+1.  **Manual & Semi-Automated Workflow:** The `gmail_lm_cleaner.py` GUI, along with `auto_analyze.py`, provides a complete, user-driven workflow. A user can export subjects, get new rules from Gemini, apply them, and then process their inbox with a local LLM.
+2.  **Configuration & Logging:** The system is configurable (`settings.json`), and logging is robust.
+3.  **Health Monitoring:** The `health_check.py` service is ready for production.
+4.  **Environment Setup:** The `setup.sh` script makes deployment straightforward.
 
-# Install as systemd service
-sudo cp gmail-autonomy.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable gmail-autonomy
+### What's Stubbed or Missing (High-Priority TODOs):
 
-# Setup log rotation
-echo "/path/to/logs/*.log {
-    daily
-    rotate 14
-    compress
-    missingok
-    notifempty
-}" | sudo tee /etc/logrotate.d/gmail-autonomy
+1.  **Centralized Gmail Authentication (`gmail_api_utils.py`):** The `get_gmail_service()` function is not implemented. This is the **#1 blocker**. The authentication logic from `gmail_lm_cleaner.py` should be moved into this function so all modules can share a single, robust way to get an authenticated service object.
+2.  **Autonomous Runner Core Logic (`autonomous_runner.py`):** The main loop calls three stubbed functions.
+    * **`stub_export_emails` must be implemented** to call the subject export logic (likely from `gmail_lm_cleaner` or a new utility function).
+    * **`stub_run_gemini_analysis` must be implemented** to call the Gemini analysis logic.
+    * **`stub_process_new_emails` must be implemented** to list new emails and process them one-by-one using the local LLM logic from `gmail_lm_cleaner.py`.
+3.  **Gemini Config Updater API Calls (`gemini_config_updater.py`):** The `update_label_schema` function needs to be implemented with real Gmail API calls (using the now-centralized `gmail_api_utils.py`) to manage labels automatically.
+4.  **Audit Tool Restoration (`audit_tool.py`):** The `restore_action` function needs to be implemented with Gmail API calls to revert actions like trashing or labeling.
 
-echo "✅ Setup complete. Run 'sudo systemctl start gmail-autonomy' to begin"
-```
+## 4. Roadmap for LLM Coders
+
+This section outlines a clear, prioritized path to completing the project.
+
+### Priority 1: Implement Core Gmail Connectivity
+
+**Goal:** Make `gmail_api_utils.py` the single source of truth for Gmail authentication and operations.
+
+1.  **Implement `get_gmail_service()`:**
+    * Move the authentication logic (handling `credentials.json` and `token.json`) from `gmail_lm_cleaner.py:setup_gmail_service` into `gmail_api_utils.py:get_gmail_service`.
+    * Ensure it robustly handles token expiration and refresh.
+    * This function should be the entry point for any script needing to talk to Gmail.
+2.  **Refactor Dependent Scripts:**
+    * Modify `gmail_lm_cleaner.py`, `audit_tool.py`, `email_cleanup.py`, etc., to call the new `get_gmail_service()` instead of having their own logic.
+
+### Priority 2: De-Stub the Autonomous Runner
+
+**Goal:** Make `autonomous_runner.py` a fully functional, autonomous service.
+
+1.  **Implement `stub_export_emails`:**
+    * In `autonomous_runner.py`, replace the stub. This function should invoke the subject export logic. You can refactor `gmail_lm_cleaner.export_subjects` into a more generic function that can be called by both the runner and the GUI.
+    * It should return the file path of the exported subjects.
+2.  **Implement `stub_run_gemini_analysis`:**
+    * Replace the stub. This function should take the exported file path, call the Gemini analysis logic (refactored from `gmail_lm_cleaner.analyze_with_gemini`), and save the resulting JSON rules to a file.
+    * It should return the path to the Gemini output JSON.
+3.  **Implement `stub_process_new_emails`:**
+    * This is the most complex part. Replace the stub with a function that:
+        * Uses `gmail_api_utils.list_emails` to get a batch of unprocessed emails from the inbox.
+        * Loops through each email message ID.
+        * For each email, calls the local LLM analysis logic (refactored from `gmail_lm_cleaner.analyze_email_with_llm`).
+        * Executes the action (trash, label, etc.) using `gmail_api_utils`.
+        * Logs every action to the audit log.
+4.  **Integrate `cron_utils.py`:**
+    * Replace the `while True` and `time.sleep` loop in `autonomous_runner.py` with the `CronScheduler` from `cron_utils.py`.
+    * Define two jobs in the scheduler: `batch_analysis` and `realtime_processing`.
+    * The main loop will now:
+        1.  Ask the scheduler for due jobs.
+        2.  Run the corresponding functions for each due job.
+        3.  Update the job status with `scheduler.update_job()`.
+        4.  Sleep for a shorter, fixed interval (e.g., 60 seconds) before checking for due jobs again.
+
+### Priority 3: Complete API Integrations
+
+**Goal:** Ensure all parts of the system that interact with Gmail are fully functional.
+
+1.  **Complete `gemini_config_updater.py`:**
+    * Implement the `TODO`s in `update_label_schema` using the `GmailLabelManager` class from `gmail_api_utils.py` to create, delete, and rename labels.
+2.  **Complete `audit_tool.py`:**
+    * Implement the `restore_action` function. It needs a `switch` statement based on the `action` in the log entry.
+    * For `"TRASH"`, it should call `GmailEmailManager.restore_from_trash()`.
+    * For `"LABEL_AND_ARCHIVE"`, it should call `GmailEmailManager.modify_labels()` to add the `INBOX` label back and remove the custom label.
+3.  **Review `email_cleanup.py`:**
+    * This file seems well-structured but depends entirely on the unimplemented `get_gmail_service`. Once that is done, this module should become functional. Test it thoroughly.
+
+### Priority 4: Final Polish and Documentation
+
+**Goal:** Ensure the project is robust, user-friendly, and well-documented.
+
+1.  **Update `README.md`:** Create a comprehensive `README.md` that explains the dual-LLM architecture, setup (`setup.sh`), and how to run the system in both autonomous (`systemd`) and manual (GUI) modes.
+2.  **Error Handling:** Review all new implementations for robust `try...except` blocks and clear logging.
+3.  **Configuration Review:** Check `settings.json` and `.env.example` to ensure all necessary configuration options are present and documented.
+4.  **Consolidate Logic:** Identify any duplicate code (like email analysis logic) and refactor it into shared utility functions to keep the codebase DRY (Don't Repeat Yourself).
+
+By following this roadmap, the `greenantix-gmailspambot` project can be transformed from a promising prototype into a powerful, fully autonomous Gmail management system.
+# GreenAntix Gmail SpamBot Project Analysis and Action Plan
+
+This document provides a comprehensive analysis of the "greenantix-gmailspambot" project and outlines a detailed plan for future development. It is intended for developers who will be continuing the work on this project.
+
+## 1. Project Overview
+
+The "greenantix-gmailspambot" is a sophisticated Python-based system designed to automate the cleaning and organization of a user's Gmail inbox. The project aims to leverage both local and cloud-based Large Language Models (LLMs) to intelligently categorize and manage emails, reducing inbox clutter and improving user productivity.
+
+### Core Objectives:
+
+* **Automated Email Processing:** Periodically scan the user's Gmail inbox for new messages.
+* **Intelligent Analysis:** Use a combination of rule-based filtering, keyword matching, and LLM-powered analysis to determine the appropriate action for each email.
+* **Flexible Categorization:** Allow users to define custom labels and actions for different types of emails.
+* **Dual-LLM Strategy:**
+    * **Gemini API:** Utilize the Gemini API for high-level analysis, such as generating filtering rules from a large corpus of email subjects. This is a cost-effective way to establish a baseline organization structure.
+    * **Local LLM (via LM Studio):** Employ a local LLM for the real-time, one-by-one processing of individual emails. This approach enhances privacy and reduces the cost associated with using cloud-based LLMs for every email.
+* **Autonomous Operation:** Run as a background service with minimal user intervention.
+* **Auditing and Reversibility:** Keep a detailed log of all actions taken and provide a mechanism to revert them if necessary.
+* **Monitoring:** Offer a health check endpoint to monitor the status and performance of the automation system.
+
+### High-Level Architecture:
+
+The system is composed of several interconnected modules:
+
+1.  **Core Logic (`gmail_lm_cleaner.py`):** The central component that orchestrates the email processing pipeline. It handles Gmail API authentication, fetches emails, and uses a combination of predefined rules and LLM analysis to decide on an action.
+2.  **Autonomous Runner (`autonomous_runner.py`):** A script responsible for the periodic execution of email processing tasks. It is designed to be run as a background service.
+3.  **Configuration and Rule Management:**
+    * `settings.json`: A central configuration file for the entire system.
+    * `gemini_config_updater.py`: A script to automatically update the system's configuration and rules based on the output of the Gemini LLM.
+4.  **Gmail API Interaction (`gmail_api_utils.py`):** A set of utility functions to abstract the complexities of the Gmail API, handling tasks like listing emails, modifying labels, and moving messages.
+5.  **Scheduling (`cron_utils.py`):** A flexible cron-based scheduling utility to manage and track recurring jobs.
+6.  **Auditing and Debugging:**
+    * `audit_tool.py`: A command-line tool to review and potentially revert actions taken by the automation.
+    * `debug_export.py`: A script to help diagnose issues with email exporting.
+7.  **Monitoring (`health_check.py`):** A Flask-based web service that provides health and status endpoints.
+8.  **User Interface (`gmail_lm_cleaner.py` - GUI portion):** A Tkinter-based graphical user interface for interacting with the system, managing settings, and initiating actions.
+9.  **Setup and Management Scripts (`setup.sh`, `start.sh`, `stop.sh`):** Shell scripts to simplify the installation, startup, and shutdown of the application.
+
+## 2. File-by-File Analysis
+
+Here is a detailed breakdown of each file in the project, including its purpose, current state, and any `TODO` items or areas for improvement.
+
+### `gmail_lm_cleaner.py`
+
+* **Purpose:** This is the heart of the application. It contains the `GmailLMCleaner` class, which handles the main logic for connecting to Gmail, fetching emails, analyzing them with a local LLM, and executing actions. It also includes a `GmailCleanerGUI` class for the Tkinter-based user interface.
+* **Current State:**
+    * The `GmailLMCleaner` class has methods for loading/saving settings, setting up the Gmail service, fetching and parsing email content, and basic rule-based filtering (important/promotional emails).
+    * It includes a method to analyze emails with a local LLM via LM Studio.
+    * The `execute_action` method can move emails to the trash (`JUNK`), keep them in the inbox (`INBOX`), or apply a new label and archive the email.
+    * The `export_subjects` method can export email subjects to a text file for analysis.
+    * The `analyze_with_gemini` and `apply_gemini_rules` methods provide functionality to use the Gemini API to generate and apply filtering rules.
+    * The `GmailCleanerGUI` class provides a functional interface for connecting to Gmail, processing emails, exporting subjects, and managing settings.
+* **TODOs/Improvements:**
+    * **LLM Integration:** The prompt for the local LLM is hardcoded. This could be made more flexible and configurable. The error handling for LLM failures is basic.
+    * **Action Execution:** The `execute_action` method could be expanded to support more complex actions, such as forwarding emails or adding comments.
+    * **GUI:** The GUI is functional but could be enhanced with more advanced features, such as a real-time log viewer that updates more smoothly and the ability to view and manage the audit log directly.
+
+### `autonomous_runner.py`
+
+* **Purpose:** This script is designed to run continuously in the background, triggering both batch analysis with Gemini and real-time email processing with the local LLM.
+* **Current State:**
+    * It loads configuration from `settings.json`.
+    * It uses a `while True` loop with `time.sleep` for scheduling.
+    * Most of the core functionality is implemented as stubs (`stub_export_emails`, `stub_run_gemini_analysis`, `stub_process_new_emails`).
+* **TODOs/Improvements:**
+    * **Remove Stubs:** The stubbed functions need to be replaced with actual implementations that call the relevant functions from other modules (e.g., `export_subjects.py`, `gemini_config_updater.py`, and the processing logic in `gmail_lm_cleaner.py`).
+    * **Scheduling:** The current `time.sleep` based scheduling is basic. It should be integrated with the more robust `cron_utils.py` for better scheduling and state management.
+    * **Error Handling:** The error handling is present but could be made more resilient.
+
+### `gemini_config_updater.py`
+
+* **Purpose:** This script takes the JSON output from a Gemini analysis and updates the system's configuration and rule files.
+* **Current State:**
+    * It can load a Gemini output JSON and the main `settings.json` file.
+    * It has functions to update category-specific rule files and auto-operations files.
+    * The functions for updating the Gmail label schema (`update_label_schema`) are currently stubbed and do not make actual API calls.
+* **TODOs/Improvements:**
+    * **Implement Gmail API Calls:** The `update_label_schema` function needs to be implemented to actually create, delete, and rename labels in Gmail using the `gmail_api_utils.py` module.
+    * **Error Handling:** More robust error handling is needed for the file I/O and API calls.
+
+### `gmail_api_utils.py`
+
+* **Purpose:** This module provides a set of reusable utilities for interacting with the Gmail API. It's intended to be imported by other scripts.
+* **Current State:**
+    * The `get_gmail_service` function, which is crucial for authentication, is a stub and raises a `NotImplementedError`. This is a major blocker.
+    * The `GmailLabelManager` and `GmailEmailManager` classes provide a good abstraction for label and email operations, respectively. However, they are currently unusable due to the authentication stub.
+* **TODOs/Improvements:**
+    * **Implement Authentication:** The `get_gmail_service` function must be fully implemented to handle the OAuth2 authentication flow. The current `gmail_lm_cleaner.py` has a working implementation that can be moved here to create a single, reusable authentication function.
+    * **Batching:** The batch operations in `GmailEmailManager` are implemented as simple loops. For better performance, these should be re-implemented to use the Gmail API's batching capabilities.
+
+### `cron_utils.py`
+
+* **Purpose:** This module provides a flexible and persistent cron-based scheduling system.
+* **Current State:**
+    * This module is well-implemented with a `CronJob` class to represent individual jobs and a `CronScheduler` class to manage multiple jobs.
+    * It supports persistent state tracking by saving job statuses to a JSON file.
+    * It uses the `croniter` library for parsing and calculating cron schedules.
+* **TODOs/Improvements:**
+    * This module is in good shape and can be integrated into the `autonomous_runner.py` to replace its current `time.sleep` logic.
+
+### `audit_tool.py`
+
+* **Purpose:** A command-line tool for auditing and restoring actions taken by the Gmail automation.
+* **Current State:**
+    * It can load and filter audit logs based on various criteria (date, action, label, etc.).
+    * The `restore_action` function is a stub and does not perform any actual restoration.
+* **TODOs/Improvements:**
+    * **Implement Restoration Logic:** The `restore_action` function needs to be implemented to call the appropriate methods in `gmail_api_utils.py` to revert actions (e.g., move an email from a label back to the inbox, restore a trashed email).
+    * **Advanced Features:** The `TODO` for advanced restoration logic, such as batch restoration and user confirmation, should be addressed.
+
+### `debug_export.py`
+
+* **Purpose:** A utility script to help debug issues related to exporting emails from Gmail.
+* **Current State:**
+    * It uses the `GmailLMCleaner` class to connect to Gmail and test various search queries.
+    * It provides a good way to diagnose why an export might be empty.
+* **TODOs/Improvements:**
+    * This script is largely complete and serves its purpose well.
+
+### `health_check.py`
+
+* **Purpose:** A Flask-based web service to monitor the health and status of the automation system.
+* **Current State:**
+    * It provides `/health` and `/status` endpoints.
+    * The `/status` endpoint integrates with `cron_utils.py` to report the status of scheduled jobs.
+* **TODOs/Improvements:**
+    * This module is well-structured. It could be expanded to provide more detailed metrics, such as the number of emails processed, errors encountered, and the last time each job ran successfully.
+
+### `log_config.py`
+
+* **Purpose:** A centralized module for configuring logging for the entire project.
+* **Current State:**
+    * It provides a flexible `init_logging` function that supports file rotation and different log levels for console and file output.
+* **TODOs/Improvements:**
+    * This module is well-implemented and used correctly by other parts of the project.
+
+### Shell Scripts (`setup.sh`, `start.sh`, `stop.sh`)
+
+* **Purpose:** These scripts simplify the setup, execution, and termination of the application.
+* **Current State:**
+    * `setup.sh`: Creates a Python virtual environment, installs dependencies, creates necessary directories, and provides instructions for setting up systemd services.
+    * `start.sh`: Checks for dependencies, provides instructions for creating `credentials.json` and `.env` files, and starts the GUI application.
+    * `stop.sh`: Finds and kills the running `gmail_lm_cleaner.py` process.
+* **TODOs/Improvements:**
+    * These scripts are well-written and provide a good user experience for managing the application.
+
+## 3. Current Project Status and Missing Pieces
+
+* **Blocked:** The entire system is currently blocked by the `NotImplementedError` in the `get_gmail_service` function within `gmail_api_utils.py`. The authentication logic in `gmail_lm_cleaner.py` needs to be centralized into this utility function.
+* **Partially Implemented:**
+    * The `autonomous_runner.py` is mostly stubs.
+    * The `audit_tool.py` has a non-functional restoration feature.
+    * The `gemini_config_updater.py` cannot actually modify Gmail labels.
+* **Well Implemented:**
+    * The `gmail_lm_cleaner.py` provides a solid foundation for the core logic and a functional GUI.
+    * `cron_utils.py` is a robust scheduling module.
+    * `health_check.py` is a good monitoring tool.
+    * The logging and setup scripts are in good shape.
+
+## 4. Action Plan for LLM Coders
+
+Here is a prioritized list of tasks to complete the project:
+
+### Priority 1: Unblock the Application
+
+1.  **Implement Centralized Authentication:**
+    * **Task:** Move the Gmail API authentication logic from `gmail_lm_cleaner.py` into the `get_gmail_service` function in `gmail_api_utils.py`.
+    * **Details:** Ensure that this function correctly handles the OAuth2 flow, including token creation, refreshing, and storage. All other scripts that need to interact with the Gmail API should then call this central function.
+    * **Files to Modify:** `gmail_api_utils.py`, `gmail_lm_cleaner.py`, `audit_tool.py`, `debug_export.py`, `gemini_config_updater.py`.
+
+### Priority 2: Implement Core Functionality
+
+2.  **Complete the `autonomous_runner.py`:**
+    * **Task:** Replace all stub functions in `autonomous_runner.py` with actual implementations.
+    * **Details:**
+        * `stub_export_emails`: Call the `export_subjects` method from an instance of the `GmailLMCleaner` class.
+        * `stub_run_gemini_analysis`: Call the `analyze_with_gemini` method.
+        * `run_gemini_config_updater`: This is already implemented correctly using `subprocess.run`.
+        * `stub_process_new_emails`: Instantiate `GmailLMCleaner` and call its `process_inbox` method.
+    * **Files to Modify:** `autonomous_runner.py`.
+
+3.  **Integrate `cron_utils.py` into `autonomous_runner.py`:**
+    * **Task:** Replace the `while True` loop and `time.sleep` in `autonomous_runner.py` with the `CronScheduler` from `cron_utils.py`.
+    * **Details:** The runner should be configured with the cron expressions from `settings.json`. In its main loop, it should check for due jobs using `scheduler.get_due_jobs()` and execute them.
+    * **Files to Modify:** `autonomous_runner.py`.
+
+4.  **Implement the `audit_tool.py` Restoration:**
+    * **Task:** Implement the `restore_action` function in `audit_tool.py`.
+    * **Details:** Based on the action recorded in the audit log entry, the function should call the appropriate "undo" method from `GmailEmailManager` in `gmail_api_utils.py` (e.g., `restore_from_trash`, `modify_labels` to move an email back to the inbox).
+    * **Files to Modify:** `audit_tool.py`.
+
+5.  **Implement the `gemini_config_updater.py` Label Management:**
+    * **Task:** Implement the `update_label_schema` function in `gemini_config_updater.py`.
+    * **Details:** Use the `GmailLabelManager` class from `gmail_api_utils.py` to create, delete, and rename labels in the user's Gmail account.
+    * **Files to Modify:** `gemini_config_updater.py`.
+
+### Priority 3: Enhancements and Refinements
+
+6.  **Improve LLM Interaction:**
+    * **Task:** Make the LLM prompts in `gmail_lm_cleaner.py` more flexible.
+    * **Details:** Consider moving the prompt templates to the `settings.json` file to allow for easier customization without code changes.
+    * **Files to Modify:** `gmail_lm_cleaner.py`, `settings.json`.
+
+7.  **Implement True Batching:**
+    * **Task:** Refactor the `batch_*` methods in `gmail_api_utils.py` to use the Gmail API's batch request capabilities.
+    * **Details:** This will significantly improve performance when processing a large number of emails at once. The Google API client library for Python has support for creating batch requests.
+    * **Files to Modify:** `gmail_api_utils.py`.
+
+8.  **Enhance the GUI:**
+    * **Task:** Add an audit log viewer to the `GmailCleanerGUI`.
+    * **Details:** Create a new tab in the GUI that displays the contents of the audit log. Add functionality to filter the log and select entries for restoration.
+    * **Files to Modify:** `gmail_lm_cleaner.py`.
+
+### Conclusion
+
+The "greenantix-gmailspambot" project is a well-architected and promising application that is close to being fully functional. By following the action plan outlined above, developers can address the remaining `TODO` items, replace the stubbed functionality with real implementations, and create a powerful and flexible tool for automated Gmail management. The dual-LLM approach is particularly innovative and, once fully implemented, will provide a cost-effective and private solution for intelligent email organization.

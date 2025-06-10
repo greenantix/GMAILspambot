@@ -19,19 +19,39 @@ def load_gemini_output(path):
     with open(path, "r") as f:
         return json.load(f)
 
-def update_label_schema(label_schema, logger):
-    # Stub Gmail API calls
-    for label in label_schema.get("create", []):
-        logger.info(f"TODO: Create label '{label}' via Gmail API (stubbed).")
-        # TODO: Implement Gmail API label creation
+def update_label_schema(gmail_label_manager, label_rules, logger):
+    logger.info("Applying label schema updates...")
 
-    for label in label_schema.get("delete", []):
-        logger.info(f"TODO: Delete label '{label}' via Gmail API (stubbed).")
-        # TODO: Implement Gmail API label deletion
+    # Create labels
+    for label_name in label_rules.get("create", []):
+        try:
+            label_id = gmail_label_manager.create_label(label_name)
+            if label_id:
+                logger.info(f"Successfully created label: '{label_name}' (ID: {label_id})")
+            else:
+                logger.warning(f"Could not create label: '{label_name}'. It might already exist or an error occurred.")
+        except Exception as e:
+            logger.error(f"Error creating label '{label_name}': {e}")
 
-    for old, new in label_schema.get("rename", {}).items():
-        logger.info(f"TODO: Rename label '{old}' to '{new}' via Gmail API (stubbed).")
-        # TODO: Implement Gmail API label renaming
+    # Delete labels
+    for label_name in label_rules.get("delete", []):
+        try:
+            if gmail_label_manager.delete_label(label_name):
+                logger.info(f"Successfully deleted label: '{label_name}'")
+            else:
+                logger.warning(f"Could not delete label: '{label_name}'. It might not exist or an error occurred.")
+        except Exception as e:
+            logger.error(f"Error deleting label '{label_name}': {e}")
+
+    # Rename labels
+    for old_name, new_name in label_rules.get("rename", {}).items():
+        try:
+            if gmail_label_manager.rename_label(old_name, new_name):
+                logger.info(f"Successfully renamed label from '{old_name}' to '{new_name}'")
+            else:
+                logger.warning(f"Could not rename label from '{old_name}' to '{new_name}'. Check if old label exists or new label already exists.")
+        except Exception as e:
+            logger.error(f"Error renaming label from '{old_name}' to '{new_name}': {e}")
 
 def update_category_rules(category_rules, rules_dir, logger):
     if not os.path.exists(rules_dir):
@@ -98,9 +118,16 @@ def main():
         logger.error(f"Failed to load Gemini output: {e}")
         sys.exit(1)
 
-    # Update label schema (stub Gmail API)
+    # Update label schema
     try:
-        update_label_schema(gemini.get("label_schema", {}), logger)
+        from gmail_api_utils import get_gmail_service, GmailLabelManager
+        gmail_service = get_gmail_service()
+        if gmail_service:
+            gmail_label_manager = GmailLabelManager(gmail_service)
+            gmail_label_manager.refresh_label_cache() # Ensure cache is fresh before operations
+            update_label_schema(gmail_label_manager, gemini.get("label_schema", {}), logger)
+        else:
+            logger.error("Failed to get Gmail service. Cannot update label schema.")
     except Exception as e:
         logger.error(f"Error updating label schema: {e}")
 
