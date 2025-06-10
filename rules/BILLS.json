@@ -1,0 +1,17 @@
+{
+  "keywords": [
+    "receipt",
+    "invoice",
+    "statement",
+    "payment confirmation",
+    "tax document",
+    "account statement"
+  ],
+  "senders": [
+    "billing@",
+    "statements@",
+    "invoice@",
+    "noreply@mail.anthropic.com",
+    "dave@mail.dave.com"
+  ]
+}

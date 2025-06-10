@@ -1,0 +1,33 @@
+{
+  "keywords": [
+    "notification",
+    "mentioned",
+    "update",
+    "message",
+    "post",
+    "reels",
+    "stories",
+    "game update",
+    "app notification",
+    "facebook",
+    "linkedin",
+    "reddit",
+    "instagram",
+    "snapchat"
+  ],
+  "senders": [
+    "notify@",
+    "notifications@",
+    "messages-noreply@",
+    "updates-noreply@",
+    "no_reply@snapchat.com",
+    "no-reply@mail.instagram.com",
+    "noreply@redditmail.com",
+    "page-notification-noreply@",
+    "jobs-listings@",
+    "noreply@e.battle.net",
+    "notifications@github.com",
+    "tinder@",
+    "developer@insideapple.apple.com"
+  ]
+}

@@ -9,7 +9,7 @@ import json
 import base64
 import requests
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, simpledialog
 from datetime import datetime, timedelta
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -18,6 +18,8 @@ from googleapiclient.discovery import build
 import threading
 from dotenv import load_dotenv
 import google.generativeai as genai
+from gmail_api_utils import get_gmail_service, GmailLabelManager
+from gemini_config_updater import update_label_schema, update_category_rules, update_label_action_mappings
 
 # If modifying these scopes, delete the token.json file.
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
@@ -27,6 +29,7 @@ load_dotenv()
 
 # LM Studio configuration
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
+LM_STUDIO_MODELS_URL = "http://localhost:1234/v1/models"
 
 # Gemini configuration
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
@@ -53,7 +56,8 @@ DEFAULT_SETTINGS = {
     "never_delete_senders": [],
     "max_emails_per_run": 50,
     "days_back": 7,
-    "dry_run": False
+    "dry_run": False,
+    "lm_studio_model": "auto"
 }
 
 class GmailLMCleaner:
@@ -129,19 +133,19 @@ class GmailLMCleaner:
                 format='full'
             ).execute()
             
-            headers = message['payload']['headers']
-            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
-            sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown Sender')
-            date = next((h['value'] for h in headers if h['name'] == 'Date'), 'Unknown Date')
+            headers = message.get('payload', {}).get('headers', [])
+            subject = next((h['value'] for h in headers if h.get('name') == 'Subject'), 'No Subject')
+            sender = next((h['value'] for h in headers if h.get('name') == 'From'), 'Unknown Sender')
+            date = next((h['value'] for h in headers if h.get('name') == 'Date'), 'Unknown Date')
             
-            body = self.extract_body(message['payload'])
+            body = self.extract_body(message.get('payload', {}))
             
             return {
                 'id': msg_id,
                 'subject': subject,
                 'sender': sender,
                 'date': date,
-                'body': body[:1000],
+                'body': body[:1000] if body else '',
                 'labels': message.get('labelIds', [])
             }
         except Exception as e:
@@ -166,9 +170,9 @@ class GmailLMCleaner:
     
     def is_important_email(self, email_data):
         """Check if email contains important keywords or is from important sender."""
-        subject_lower = email_data['subject'].lower()
-        sender_lower = email_data['sender'].lower()
-        body_lower = email_data['body'].lower()
+        subject_lower = email_data.get('subject', '').lower()
+        sender_lower = email_data.get('sender', '').lower()
+        body_lower = email_data.get('body', '').lower()
         
         # Check important keywords
         for keyword in self.settings['important_keywords']:
@@ -184,8 +188,8 @@ class GmailLMCleaner:
     
     def is_promotional_email(self, email_data):
         """Check if email is promotional."""
-        subject_lower = email_data['subject'].lower()
-        body_lower = email_data['body'].lower()
+        subject_lower = email_data.get('subject', '').lower()
+        body_lower = email_data.get('body', '').lower()
         
         promo_count = 0
         for keyword in self.settings['promotional_keywords']:
@@ -193,6 +197,18 @@ class GmailLMCleaner:
                 return True
         
         return promo_count >= 2  # Require at least 2 promotional keywords
+    
+    def get_available_models(self):
+        """Get list of available models from LM Studio."""
+        try:
+            response = requests.get(LM_STUDIO_MODELS_URL, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                models = [model['id'] for model in data.get('data', [])]
+                return models
+            return []
+        except requests.exceptions.RequestException:
+            return []
     
     def analyze_email_with_llm(self, email_data):
         """Use LM Studio to analyze email with strict filtering."""
@@ -222,16 +238,24 @@ class GmailLMCleaner:
         prompt = organization_prompt_template.format(email_data=email_data)
  
         try:
+            # Prepare request payload
+            payload = {
+                "messages": [
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.1,  # More conservative
+                "max_tokens": 100
+            }
+            
+            # Add model selection if specified
+            model_name = self.settings.get('lm_studio_model', 'auto')
+            if model_name and model_name != 'auto':
+                payload['model'] = model_name
+            
             response = requests.post(
                 LM_STUDIO_URL,
-                json={
-                    "messages": [
-                        {"role": "system", "content": system_message},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.1,  # More conservative
-                    "max_tokens": 100
-                },
+                json=payload,
                 timeout=30
             )
             
@@ -376,8 +400,10 @@ class GmailLMCleaner:
                     continue
                 
                 if log_callback:
-                    log_callback(f"  Subject: {email_data['subject'][:60]}...")
-                    log_callback(f"  From: {email_data['sender']}")
+                    subject_text = email_data.get('subject', 'No Subject')[:60]
+                    sender_text = email_data.get('sender', 'Unknown Sender')
+                    log_callback(f"  Subject: {subject_text}...")
+                    log_callback(f"  From: {sender_text}")
                 
                 decision = self.analyze_email_with_llm(email_data)
                 
@@ -501,9 +527,22 @@ class GmailLMCleaner:
             # Generate response
             response = model.generate_content(prompt)
             
-            # Parse JSON response
+            # Parse JSON response - handle potential markdown code blocks
             try:
-                rules = json.loads(response.text)
+                response_text = response.text.strip()
+                
+                # Remove markdown code blocks if present
+                if response_text.startswith('```json'):
+                    response_text = response_text[7:]  # Remove ```json
+                elif response_text.startswith('```'):
+                    response_text = response_text[3:]   # Remove ```
+                
+                if response_text.endswith('```'):
+                    response_text = response_text[:-3]  # Remove trailing ```
+                
+                response_text = response_text.strip()
+                
+                rules = json.loads(response_text)
                 print("✅ Gemini analysis complete!")
                 return rules
             except json.JSONDecodeError:
@@ -515,32 +554,93 @@ class GmailLMCleaner:
             print(f"❌ Gemini analysis error: {e}")
             return None
     
-    def apply_gemini_rules(self, rules):
-        """Apply filtering rules generated by Gemini."""
+    def apply_gemini_rules(self, rules, log_callback=None):
+        """Apply filtering rules generated by Gemini with integrated config updater logic."""
         if not rules:
-            print("❌ No rules to apply")
+            if log_callback:
+                log_callback("❌ No rules to apply")
+            else:
+                print("❌ No rules to apply")
             return
         
-        print("🔧 Applying Gemini-generated filtering rules...")
+        if log_callback:
+            log_callback("🔧 Applying Gemini-generated filtering rules...")
+        else:
+            print("🔧 Applying Gemini-generated filtering rules...")
         
-        # Update important keywords and senders
-        if 'important_keywords' in rules:
-            self.settings['important_keywords'] = rules['important_keywords']
-        
-        if 'important_senders' in rules:
-            self.settings['important_senders'] = rules['important_senders']
-        
-        # Store category rules for advanced filtering
-        if 'category_rules' in rules:
-            self.settings['category_rules'] = rules['category_rules']
-        
-        # Update auto-delete list
-        if 'auto_delete_senders' in rules:
-            self.settings['auto_delete_senders'] = rules['auto_delete_senders']
-        
-        # Save updated settings
-        self.save_settings()
-        print("✅ Filtering rules updated and saved!")
+        try:
+            # Import logger for gemini_config_updater functions
+            from log_config import get_logger
+            logger = get_logger(__name__)
+            
+            # Update label schema if specified
+            if 'label_schema' in rules:
+                try:
+                    gmail_service = get_gmail_service()
+                    if gmail_service:
+                        gmail_label_manager = GmailLabelManager(gmail_service)
+                        gmail_label_manager.refresh_label_cache()
+                        update_label_schema(gmail_label_manager, rules['label_schema'], logger)
+                        if log_callback:
+                            log_callback("✅ Label schema updated")
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"⚠️ Label schema update failed: {e}")
+                    logger.error(f"Label schema update failed: {e}")
+            
+            # Update category rules
+            if 'category_rules' in rules:
+                try:
+                    rules_dir = "rules"
+                    update_category_rules(rules['category_rules'], rules_dir, logger)
+                    if log_callback:
+                        log_callback("✅ Category rules updated")
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"⚠️ Category rules update failed: {e}")
+                    logger.error(f"Category rules update failed: {e}")
+            
+            # Update important keywords and senders
+            if 'important_keywords' in rules:
+                self.settings['important_keywords'] = rules['important_keywords']
+            
+            if 'important_senders' in rules:
+                self.settings['important_senders'] = rules['important_senders']
+            
+            # Store category rules for advanced filtering in settings
+            if 'category_rules' in rules:
+                self.settings['category_rules'] = rules['category_rules']
+            
+            # Update auto-delete list
+            if 'auto_delete_senders' in rules:
+                self.settings['auto_delete_senders'] = rules['auto_delete_senders']
+            
+            # Update label action mappings in settings
+            if 'category_rules' in rules:
+                try:
+                    updated = update_label_action_mappings(self.settings, rules['category_rules'], logger)
+                    if updated and log_callback:
+                        log_callback("✅ Label action mappings updated")
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"⚠️ Label action mappings update failed: {e}")
+                    logger.error(f"Label action mappings update failed: {e}")
+            
+            # Save updated settings
+            self.save_settings()
+            
+            if log_callback:
+                log_callback("✅ Filtering rules updated and saved!")
+            else:
+                print("✅ Filtering rules updated and saved!")
+                
+        except Exception as e:
+            error_msg = f"❌ Error applying Gemini rules: {e}"
+            if log_callback:
+                log_callback(error_msg)
+            else:
+                print(error_msg)
+            raise
     
     def export_and_analyze(self, max_emails=1000, days_back=30):
         """Export subjects and automatically analyze with Gemini."""
@@ -584,8 +684,13 @@ class GmailCleanerGUI:
         settings_frame = ttk.Frame(notebook)
         notebook.add(settings_frame, text="Settings")
         
+        # Rule & Label Management tab
+        management_frame = ttk.Frame(notebook)
+        notebook.add(management_frame, text="Rule & Label Management")
+        
         self.setup_main_tab(main_frame)
         self.setup_settings_tab(settings_frame)
+        self.setup_management_tab(management_frame)
         
     def setup_main_tab(self, parent):
         """Setup the main control tab."""
@@ -671,6 +776,17 @@ class GmailCleanerGUI:
         self.max_emails_var = tk.StringVar(value="50")
         ttk.Entry(proc_frame, textvariable=self.max_emails_var, width=10).pack(anchor=tk.W, pady=2)
         
+        # LM Studio Model Selection
+        model_frame = ttk.Frame(proc_frame)
+        model_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(model_frame, text="LM Studio Model:").pack(side=tk.LEFT)
+        self.model_var = tk.StringVar(value="auto")
+        self.model_combo = ttk.Combobox(model_frame, textvariable=self.model_var, state="readonly", width=20)
+        self.model_combo.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(model_frame, text="Refresh Models", command=self.refresh_models).pack(side=tk.LEFT, padx=5)
+        
         # Buttons
         button_frame = ttk.Frame(scrollable_frame)
         button_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -681,6 +797,78 @@ class GmailCleanerGUI:
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        
+    def setup_management_tab(self, parent):
+        """Setup the Rule & Label Management tab."""
+        # Create scrollable frame
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Label Action Mappings Section
+        mappings_frame = ttk.LabelFrame(scrollable_frame, text="Label Action Mappings", padding=10)
+        mappings_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(mappings_frame, text="Configure what happens to emails with each label:").pack(anchor=tk.W)
+        
+        # Frame for the mappings table
+        self.mappings_table_frame = ttk.Frame(mappings_frame)
+        self.mappings_table_frame.pack(fill=tk.X, pady=5)
+        
+        # Gmail Label Manager Section
+        labels_frame = ttk.LabelFrame(scrollable_frame, text="Gmail Label Manager", padding=10)
+        labels_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(labels_frame, text="Manage Gmail labels directly:").pack(anchor=tk.W)
+        
+        # Buttons for label operations
+        label_buttons_frame = ttk.Frame(labels_frame)
+        label_buttons_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(label_buttons_frame, text="Refresh Labels", command=self.refresh_labels).pack(side=tk.LEFT, padx=5)
+        ttk.Button(label_buttons_frame, text="Create New Label", command=self.create_new_label).pack(side=tk.LEFT, padx=5)
+        
+        # Frame for the labels list
+        self.labels_list_frame = ttk.Frame(labels_frame)
+        self.labels_list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Rule Viewer Section
+        rules_frame = ttk.LabelFrame(scrollable_frame, text="Rule Viewer/Editor", padding=10)
+        rules_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        ttk.Label(rules_frame, text="Select a label to view/edit its rules:").pack(anchor=tk.W)
+        
+        # Rule selection
+        rule_select_frame = ttk.Frame(rules_frame)
+        rule_select_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(rule_select_frame, text="Label:").pack(side=tk.LEFT)
+        self.rule_label_var = tk.StringVar()
+        self.rule_label_combo = ttk.Combobox(rule_select_frame, textvariable=self.rule_label_var, state="readonly")
+        self.rule_label_combo.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        self.rule_label_combo.bind('<<ComboboxSelected>>', self.load_rule_details)
+        
+        ttk.Button(rule_select_frame, text="Load Rule", command=self.load_rule_details).pack(side=tk.LEFT, padx=5)
+        
+        # Rule details display
+        self.rule_details_text = scrolledtext.ScrolledText(rules_frame, height=10)
+        self.rule_details_text.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Initialize components
+        self.gmail_label_manager = None
+        self.setup_label_mappings_table()
+        self.refresh_labels()
         
     def log(self, message):
         """Add message to log."""
@@ -695,6 +883,13 @@ class GmailCleanerGUI:
             self.cleaner = GmailLMCleaner()
             self.status_label.config(text="✓ Connected to Gmail")
             self.log("✓ Gmail connection successful")
+            
+            # Initialize management tab components after successful connection
+            if hasattr(self, 'setup_label_mappings_table'):
+                self.setup_label_mappings_table()
+            if hasattr(self, 'refresh_labels'):
+                self.refresh_labels()
+                
         except Exception as e:
             self.status_label.config(text="✗ Connection failed")
             self.log(f"✗ Gmail connection failed: {e}")
@@ -765,13 +960,136 @@ class GmailCleanerGUI:
         """Thread function for auto-analyzing with Gemini."""
         try:
             self.log("🚀 Starting automatic email analysis with Gemini...")
-            self.cleaner.export_and_analyze(max_emails=1000, days_back=30)
-            self.log("🎉 Analysis complete! Your filtering rules have been updated.")
-            self.log("You can now process emails with the improved filters.")
-            # Reload settings in UI
-            self.load_settings()
+            
+            # Export subjects first
+            self.log("📤 Exporting email subjects...")
+            subjects_file = self.cleaner.export_subjects(max_emails=1000, days_back=30)
+            
+            if not subjects_file:
+                self.log("❌ Failed to export subjects")
+                return
+            
+            # Analyze with Gemini
+            self.log("🤖 Analyzing with Gemini...")
+            proposed_rules = self.cleaner.analyze_with_gemini(subjects_file)
+            
+            if not proposed_rules:
+                self.log("❌ Gemini analysis failed")
+                return
+            
+            self.log("✅ Gemini analysis complete! Showing proposed changes...")
+            
+            # Show confirmation dialog with proposed changes
+            self.root.after(0, lambda: self.show_confirmation_dialog(proposed_rules))
+            
         except Exception as e:
             self.log(f"Error during auto-analysis: {e}")
+    
+    def show_confirmation_dialog(self, proposed_rules):
+        """Show confirmation dialog with proposed changes from Gemini."""
+        # Create confirmation window
+        confirm_window = tk.Toplevel(self.root)
+        confirm_window.title("Confirm Gemini Analysis Results")
+        confirm_window.geometry("800x600")
+        confirm_window.transient(self.root)
+        confirm_window.grab_set()
+        
+        # Main frame
+        main_frame = ttk.Frame(confirm_window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Title
+        ttk.Label(main_frame, text="Gemini Analysis Results", font=('TkDefaultFont', 12, 'bold')).pack(pady=(0, 10))
+        
+        # Create notebook for organized display
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        
+        # Important Keywords tab
+        if 'important_keywords' in proposed_rules:
+            keywords_frame = ttk.Frame(notebook)
+            notebook.add(keywords_frame, text="Important Keywords")
+            
+            ttk.Label(keywords_frame, text="Proposed important keywords:").pack(anchor=tk.W, pady=5)
+            keywords_text = scrolledtext.ScrolledText(keywords_frame, height=8)
+            keywords_text.pack(fill=tk.BOTH, expand=True, pady=5)
+            keywords_text.insert(1.0, "\n".join(proposed_rules['important_keywords']))
+        
+        # Important Senders tab
+        if 'important_senders' in proposed_rules:
+            senders_frame = ttk.Frame(notebook)
+            notebook.add(senders_frame, text="Important Senders")
+            
+            ttk.Label(senders_frame, text="Proposed important sender patterns:").pack(anchor=tk.W, pady=5)
+            senders_text = scrolledtext.ScrolledText(senders_frame, height=8)
+            senders_text.pack(fill=tk.BOTH, expand=True, pady=5)
+            senders_text.insert(1.0, "\n".join(proposed_rules['important_senders']))
+        
+        # Category Rules tab
+        if 'category_rules' in proposed_rules:
+            categories_frame = ttk.Frame(notebook)
+            notebook.add(categories_frame, text="Category Rules")
+            
+            ttk.Label(categories_frame, text="Proposed category rules:").pack(anchor=tk.W, pady=5)
+            categories_text = scrolledtext.ScrolledText(categories_frame, height=15)
+            categories_text.pack(fill=tk.BOTH, expand=True, pady=5)
+            categories_text.insert(1.0, json.dumps(proposed_rules['category_rules'], indent=2))
+        
+        # Auto-delete Senders tab
+        if 'auto_delete_senders' in proposed_rules:
+            delete_frame = ttk.Frame(notebook)
+            notebook.add(delete_frame, text="Auto-Delete Senders")
+            
+            ttk.Label(delete_frame, text="Proposed auto-delete senders:").pack(anchor=tk.W, pady=5)
+            delete_text = scrolledtext.ScrolledText(delete_frame, height=8)
+            delete_text.pack(fill=tk.BOTH, expand=True, pady=5)
+            delete_text.insert(1.0, "\n".join(proposed_rules['auto_delete_senders']))
+        
+        # Buttons frame
+        buttons_frame = ttk.Frame(main_frame)
+        buttons_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        def apply_changes():
+            try:
+                self.cleaner.apply_gemini_rules(proposed_rules, log_callback=self.log)
+                
+                # Refresh UI components
+                self.load_settings()
+                if hasattr(self, 'setup_label_mappings_table'):
+                    self.setup_label_mappings_table()
+                if hasattr(self, 'refresh_labels'):
+                    self.refresh_labels()
+                
+                confirm_window.destroy()
+                messagebox.showinfo("Success", "Gemini rules applied successfully!\n\nYour filtering rules have been updated.")
+            except Exception as e:
+                self.log(f"❌ Error applying rules: {e}")
+                messagebox.showerror("Error", f"Failed to apply rules: {e}")
+        
+        def cancel_changes():
+            self.log("❌ User cancelled Gemini rule application")
+            confirm_window.destroy()
+        
+        ttk.Button(buttons_frame, text="Apply Changes", command=apply_changes).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(buttons_frame, text="Cancel", command=cancel_changes).pack(side=tk.RIGHT, padx=5)
+        
+        # Warning label
+        warning_label = ttk.Label(main_frame, 
+                                text="⚠️ Review all proposed changes carefully before applying.", 
+                                foreground="orange")
+        warning_label.pack(pady=5)
+    
+    def refresh_models(self):
+        """Refresh the list of available LM Studio models."""
+        if not self.cleaner:
+            self.cleaner = GmailLMCleaner()
+        
+        models = self.cleaner.get_available_models()
+        model_options = ["auto"] + models
+        
+        self.model_combo['values'] = model_options
+        if not models:
+            self.model_combo['values'] = ["auto", "No models available"]
     
     def load_settings(self):
         """Load settings into UI."""
@@ -791,6 +1109,18 @@ class GmailCleanerGUI:
         
         self.days_var.set(str(settings['days_back']))
         self.max_emails_var.set(str(settings['max_emails_per_run']))
+        
+        # Load model selection
+        model_setting = settings.get('lm_studio_model', 'auto')
+        self.model_var.set(model_setting)
+        self.refresh_models()
+        
+        # Auto-refresh management tab components if they exist
+        if hasattr(self, 'setup_label_mappings_table'):
+            try:
+                self.setup_label_mappings_table()
+            except Exception as e:
+                pass  # Silently fail if management tab not initialized yet
         
         self.log("Settings loaded")
     
@@ -817,6 +1147,9 @@ class GmailCleanerGUI:
             messagebox.showerror("Error", "Days back and max emails must be numbers")
             return
         
+        # Save model selection
+        self.cleaner.settings['lm_studio_model'] = self.model_var.get()
+        
         self.cleaner.save_settings()
         self.log("Settings saved")
         messagebox.showinfo("Success", "Settings saved successfully")
@@ -829,6 +1162,224 @@ class GmailCleanerGUI:
             self.cleaner.settings = DEFAULT_SETTINGS.copy()
             self.load_settings()
             self.log("Settings reset to defaults")
+    
+    def setup_label_mappings_table(self):
+        """Setup the label action mappings table."""
+        # Clear existing widgets
+        for widget in self.mappings_table_frame.winfo_children():
+            widget.destroy()
+        
+        if not self.cleaner:
+            ttk.Label(self.mappings_table_frame, text="Connect to Gmail first to load mappings").pack()
+            return
+        
+        # Load settings to get label_action_mappings
+        self.cleaner.settings = self.cleaner.load_settings()
+        mappings = self.cleaner.settings.get('label_action_mappings', {})
+        
+        # Header
+        header_frame = ttk.Frame(self.mappings_table_frame)
+        header_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(header_frame, text="Label", width=20).pack(side=tk.LEFT)
+        ttk.Label(header_frame, text="Action", width=20).pack(side=tk.LEFT)
+        
+        # Action options
+        action_options = ["KEEP", "LABEL_AND_ARCHIVE", "TRASH", "IMPORTANT"]
+        
+        self.mapping_vars = {}
+        for label, action in mappings.items():
+            row_frame = ttk.Frame(self.mappings_table_frame)
+            row_frame.pack(fill=tk.X, pady=2)
+            
+            ttk.Label(row_frame, text=label, width=20).pack(side=tk.LEFT)
+            
+            action_var = tk.StringVar(value=action)
+            self.mapping_vars[label] = action_var
+            action_combo = ttk.Combobox(row_frame, textvariable=action_var, 
+                                      values=action_options, state="readonly", width=18)
+            action_combo.pack(side=tk.LEFT, padx=5)
+            action_combo.bind('<<ComboboxSelected>>', lambda e, l=label: self.update_label_mapping(l))
+        
+        # Save button
+        ttk.Button(self.mappings_table_frame, text="Save All Mappings", 
+                  command=self.save_all_mappings).pack(pady=10)
+    
+    def update_label_mapping(self, label):
+        """Update a single label mapping."""
+        if not self.cleaner:
+            return
+        
+        new_action = self.mapping_vars[label].get()
+        if 'label_action_mappings' not in self.cleaner.settings:
+            self.cleaner.settings['label_action_mappings'] = {}
+        
+        self.cleaner.settings['label_action_mappings'][label] = new_action
+        self.log(f"Updated {label} -> {new_action}")
+    
+    def save_all_mappings(self):
+        """Save all label mappings to settings file."""
+        if not self.cleaner:
+            messagebox.showwarning("Warning", "Please connect to Gmail first")
+            return
+        
+        try:
+            self.cleaner.save_settings()
+            self.log("All label mappings saved successfully")
+            messagebox.showinfo("Success", "Label mappings saved successfully")
+        except Exception as e:
+            self.log(f"Error saving mappings: {e}")
+            messagebox.showerror("Error", f"Failed to save mappings: {e}")
+    
+    def refresh_labels(self):
+        """Refresh the Gmail labels list."""
+        if not self.cleaner:
+            self.log("Connect to Gmail first to refresh labels")
+            return
+        
+        try:
+            # Initialize Gmail label manager if not already done
+            if not self.gmail_label_manager:
+                gmail_service = get_gmail_service()
+                if gmail_service:
+                    self.gmail_label_manager = GmailLabelManager(gmail_service)
+                else:
+                    self.log("Failed to get Gmail service")
+                    return
+            
+            # Refresh label cache
+            self.gmail_label_manager.refresh_label_cache()
+            labels = self.gmail_label_manager.list_labels()
+            
+            # Clear existing widgets
+            for widget in self.labels_list_frame.winfo_children():
+                widget.destroy()
+            
+            # Create header
+            header_frame = ttk.Frame(self.labels_list_frame)
+            header_frame.pack(fill=tk.X, pady=2)
+            ttk.Label(header_frame, text="Label Name", width=30).pack(side=tk.LEFT)
+            ttk.Label(header_frame, text="Actions", width=30).pack(side=tk.LEFT)
+            
+            # List labels with action buttons
+            for label_name, label_id in labels.items():
+                # Skip system labels
+                if label_name in ['INBOX', 'SENT', 'DRAFT', 'SPAM', 'TRASH', 'IMPORTANT', 'STARRED', 'UNREAD']:
+                    continue
+                
+                row_frame = ttk.Frame(self.labels_list_frame)
+                row_frame.pack(fill=tk.X, pady=1)
+                
+                ttk.Label(row_frame, text=label_name, width=30).pack(side=tk.LEFT)
+                
+                actions_frame = ttk.Frame(row_frame)
+                actions_frame.pack(side=tk.LEFT)
+                
+                ttk.Button(actions_frame, text="Rename", width=8,
+                          command=lambda ln=label_name: self.rename_label(ln)).pack(side=tk.LEFT, padx=2)
+                ttk.Button(actions_frame, text="Delete", width=8,
+                          command=lambda ln=label_name: self.delete_label(ln)).pack(side=tk.LEFT, padx=2)
+            
+            # Update rule combo box
+            label_names = [name for name in labels.keys() 
+                          if name not in ['INBOX', 'SENT', 'DRAFT', 'SPAM', 'TRASH', 'IMPORTANT', 'STARRED', 'UNREAD']]
+            self.rule_label_combo['values'] = label_names
+            
+            self.log(f"Refreshed {len(labels)} Gmail labels")
+            
+        except Exception as e:
+            self.log(f"Error refreshing labels: {e}")
+            messagebox.showerror("Error", f"Failed to refresh labels: {e}")
+    
+    def create_new_label(self):
+        """Create a new Gmail label."""
+        if not self.gmail_label_manager:
+            messagebox.showwarning("Warning", "Please refresh labels first")
+            return
+        
+        label_name = simpledialog.askstring("Create Label", "Enter label name:")
+        if label_name:
+            try:
+                label_id = self.gmail_label_manager.create_label(label_name)
+                if label_id:
+                    self.log(f"Created label: {label_name}")
+                    messagebox.showinfo("Success", f"Label '{label_name}' created successfully")
+                    self.refresh_labels()
+                    self.setup_label_mappings_table()  # Refresh mappings table
+                else:
+                    messagebox.showerror("Error", f"Failed to create label '{label_name}'")
+            except Exception as e:
+                self.log(f"Error creating label: {e}")
+                messagebox.showerror("Error", f"Failed to create label: {e}")
+    
+    def rename_label(self, old_name):
+        """Rename a Gmail label."""
+        if not self.gmail_label_manager:
+            messagebox.showwarning("Warning", "Please refresh labels first")
+            return
+        
+        new_name = simpledialog.askstring("Rename Label", f"Enter new name for '{old_name}':")
+        if new_name:
+            if messagebox.askyesno("Confirm Rename", f"Rename '{old_name}' to '{new_name}'?\n\nThis will update all emails with this label."):
+                try:
+                    if self.gmail_label_manager.rename_label(old_name, new_name):
+                        self.log(f"Renamed label: {old_name} -> {new_name}")
+                        messagebox.showinfo("Success", f"Label renamed successfully")
+                        self.refresh_labels()
+                        self.setup_label_mappings_table()  # Refresh mappings table
+                    else:
+                        messagebox.showerror("Error", f"Failed to rename label")
+                except Exception as e:
+                    self.log(f"Error renaming label: {e}")
+                    messagebox.showerror("Error", f"Failed to rename label: {e}")
+    
+    def delete_label(self, label_name):
+        """Delete a Gmail label."""
+        if not self.gmail_label_manager:
+            messagebox.showwarning("Warning", "Please refresh labels first")
+            return
+        
+        if messagebox.askyesno("Confirm Delete", f"Delete label '{label_name}'?\n\nThis will remove the label from all emails."):
+            try:
+                if self.gmail_label_manager.delete_label(label_name):
+                    self.log(f"Deleted label: {label_name}")
+                    messagebox.showinfo("Success", f"Label '{label_name}' deleted successfully")
+                    self.refresh_labels()
+                    self.setup_label_mappings_table()  # Refresh mappings table
+                else:
+                    messagebox.showerror("Error", f"Failed to delete label '{label_name}'")
+            except Exception as e:
+                self.log(f"Error deleting label: {e}")
+                messagebox.showerror("Error", f"Failed to delete label: {e}")
+    
+    def load_rule_details(self, event=None):
+        """Load and display rule details for selected label."""
+        label_name = self.rule_label_var.get()
+        if not label_name:
+            return
+        
+        try:
+            rules_dir = "rules"
+            rule_file = os.path.join(rules_dir, f"{label_name}.json")
+            
+            if os.path.exists(rule_file):
+                with open(rule_file, 'r') as f:
+                    rule_data = json.load(f)
+                
+                # Format the rule data for display
+                formatted_data = json.dumps(rule_data, indent=2)
+                
+                self.rule_details_text.delete(1.0, tk.END)
+                self.rule_details_text.insert(1.0, formatted_data)
+                
+                self.log(f"Loaded rule details for {label_name}")
+            else:
+                self.rule_details_text.delete(1.0, tk.END)
+                self.rule_details_text.insert(1.0, f"No rule file found for '{label_name}'\n\nRule file would be: {rule_file}")
+                
+        except Exception as e:
+            self.log(f"Error loading rule details: {e}")
+            self.rule_details_text.delete(1.0, tk.END)
+            self.rule_details_text.insert(1.0, f"Error loading rule details: {e}")
     
     def run(self):
         """Start the GUI."""
