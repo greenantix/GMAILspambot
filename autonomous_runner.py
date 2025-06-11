@@ -12,7 +12,7 @@ from gmail_api_utils import GmailEmailManager, get_gmail_service
 import audit_tool
 from cron_utils import CronScheduler # Import CronScheduler
 
-SETTINGS_PATH = "settings.json"
+SETTINGS_PATH = "config/settings.json"
 DEFAULT_LOG_FILE = "automation.log"
 
 def load_settings(settings_path):

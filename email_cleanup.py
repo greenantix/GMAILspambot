@@ -27,7 +27,7 @@ logger = get_logger(__name__)
 DEFAULT_RETENTION_DAYS = 365
 TRASH_RETENTION_DAYS = 30
 
-def load_settings(settings_path: str = "settings.json") -> Dict[str, Any]:
+def load_settings(settings_path: str = "config/settings.json") -> Dict[str, Any]:
     """
     Load settings from a JSON file.
 
@@ -237,7 +237,7 @@ def empty_trash(
     return deleted
 
 def run_cleanup_job(
-    settings_path: str = "settings.json",
+    settings_path: str = "config/settings.json",
     dry_run: bool = False
 ) -> Dict[str, Any]:
     """
@@ -251,7 +251,7 @@ def run_cleanup_job(
         dict: Summary of actions performed.
 
     Usage Example:
-        run_cleanup_job("settings.json", dry_run=True)
+        run_cleanup_job("config/settings.json", dry_run=True)
     """
     logger.info("Running full email cleanup job...")
     settings = load_settings(settings_path)
@@ -265,6 +265,6 @@ def run_cleanup_job(
 # Usage Example (for import, not execution):
 #
 # from email_cleanup import run_cleanup_job
-# run_cleanup_job("settings.json", dry_run=True)
+# run_cleanup_job("config/settings.json", dry_run=True)
 #
 # For scheduled jobs, use cron_utils.CronScheduler to track last run and status.

@@ -56,13 +56,48 @@ fi
 
 echo "✓ All dependencies installed"
 
-# Check if credentials file exists
-if [ ! -f "credentials.json" ]; then
-    echo "⚠️  credentials.json not found!"
-    echo "   Please download your Gmail API credentials and place them as 'credentials.json'"
+# Check if config directory and credentials file exist
+if [ ! -d "config" ]; then
+    echo "📁 Creating config directory..."
+    mkdir -p config
+fi
+
+if [ ! -f "config/credentials.json" ]; then
+    echo "⚠️  config/credentials.json not found!"
+    echo "   Please download your Gmail API credentials and place them as 'config/credentials.json'"
     echo "   Get them from: https://console.cloud.google.com/apis/credentials"
     echo ""
-    read -p "Press Enter when you've added credentials.json, or Ctrl+C to exit..."
+    read -p "Press Enter when you've added config/credentials.json, or Ctrl+C to exit..."
+fi
+
+# Check if settings.json exists in config, if not create a default one
+if [ ! -f "config/settings.json" ]; then
+    echo "📄 Creating default config/settings.json..."
+    # Create a minimal default settings file
+    cat > config/settings.json << EOF
+{
+  "important_keywords": [
+    "security alert", "account suspended", "verify your account", "confirm your identity",
+    "password reset", "login attempt", "suspicious activity", "unauthorized access",
+    "fraud alert", "payment failed", "invoice due", "tax notice", "bank statement",
+    "urgent action required", "account expires", "verification code"
+  ],
+  "important_senders": [
+    "security@", "alerts@", "fraud@", "admin@", 
+    "billing@", "accounts@", "statements@"
+  ],
+  "promotional_keywords": [
+    "sale", "discount", "offer", "deal", "coupon", "promo", "marketing",
+    "newsletter", "unsubscribe", "shop", "buy", "limited time", "free"
+  ],
+  "auto_delete_senders": [],
+  "never_delete_senders": [],
+  "max_emails_per_run": 50,
+  "days_back": 7,
+  "dry_run": false,
+  "lm_studio_model": "meta-llama-3.1-8b-instruct"
+}
+EOF
 fi
 
 # Check if .env file exists
@@ -86,13 +121,18 @@ else
 fi
 
 echo ""
-echo "🎯 Starting Gmail Cleaner GUI..."
+echo "🎯 Starting Gmail Cleaner GUI with Enhanced Features..."
+echo "   🚨 INBOX: Critical emails only (security alerts, personal messages)"
+echo "   ⚡ PRIORITY: Important but not urgent (GitHub, Zillow, bank statements)"
+echo "   📦 Other categories: Bills, Shopping, Newsletters, Social, Personal, Junk"
+echo "   🔧 New: Filter-first processing for 75k+ email backlogs"
+echo ""
 echo "   Close the GUI window or press Ctrl+C here to stop"
 echo ""
 
 # Make the script executable and run the GUI
 chmod +x gmail_lm_cleaner.py
-python3 -c "from gmail_lm_cleaner import GmailCleanerGUI; app = GmailCleanerGUI(); app.run()"
+python3 gmail_lm_cleaner.py
 
 echo ""
 echo "👋 Gmail Cleaner stopped"

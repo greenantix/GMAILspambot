@@ -6,15 +6,26 @@
     "product launch",
     "sale",
     "discount",
-    "promotion",
+    "promo",
     "offer"
   ],
   "senders": [
     "orders@",
     "shipping@",
     "store@",
-    "purchases@",
     "deals@",
-    "offers@"
+    "promotions@",
+    "offers@",
+    "my.pizzahut.com",
+    "em.keurig.com",
+    "order.online",
+    "em.officedepot.com",
+    "em.americantrucks.com",
+    "news@subs.subway.com",
+    "offers@offers.marcos.com",
+    "myslice.papamurphys.com",
+    "help@walmart.com",
+    "newsletters@em.walmart.com",
+    "store-news@amazon.com"
   ]
 }

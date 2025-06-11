@@ -1,12 +1,17 @@
-# Authentication and credentials
+# Authentication and credentials - NEVER COMMIT THESE
 credentials.json
+config/credentials.json
 token.json
+config/token.json
 .env
+.env.*
 
-# Generated files
+# Generated files and user data
 email_subjects.txt
 email_subjects_*.txt
 settings.json
+config/settings.json
+logs/*.log
 
 # Python
 __pycache__/

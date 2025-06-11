@@ -28,7 +28,7 @@ from datetime import datetime
 import traceback
 
 # --- Load configuration ---
-def load_settings(settings_path="settings.json"):
+def load_settings(settings_path="config/settings.json"):
     try:
         with open(settings_path, "r") as f:
             # Remove JS-style comments if present

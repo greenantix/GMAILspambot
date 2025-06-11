@@ -32,7 +32,7 @@ from log_config import get_logger
 
 logger = get_logger(__name__)
 
-# If modifying these scopes, delete the file token.json.
+# If modifying these scopes, delete the file config/token.json.
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.modify',
     'https://www.googleapis.com/auth/gmail.settings.basic'
@@ -42,7 +42,7 @@ SCOPES = [
 # OAuth2 Authentication
 # =========================
 
-def get_gmail_service(credentials_path: str = "credentials.json", token_path: str = "token.json"):
+def get_gmail_service(credentials_path: str = "config/credentials.json", token_path: str = "config/token.json"):
     """
     Obtain an authenticated Gmail API service object using OAuth2.
 

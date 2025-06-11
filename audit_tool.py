@@ -23,7 +23,7 @@ from typing import List, Dict, Any, Optional
 import log_config
 from gmail_api_utils import GmailEmailManager, get_gmail_service
 
-SETTINGS_PATH = "settings.json"
+SETTINGS_PATH = "config/settings.json"
 
 def load_settings(path: str) -> dict:
     try:

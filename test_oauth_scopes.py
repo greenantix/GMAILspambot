@@ -14,7 +14,7 @@ def test_oauth_scopes():
     for scope in SCOPES:
         print(f"   ✅ {scope}")
     
-    print(f"\n📁 Token file: {'EXISTS' if os.path.exists('token.json') else 'DELETED (will force re-auth)'}")
+    print(f"\n📁 Token file: {'EXISTS' if os.path.exists('config/token.json') else 'DELETED (will force re-auth)'}")
     
     try:
         print(f"\n🔄 Initializing Gmail client...")

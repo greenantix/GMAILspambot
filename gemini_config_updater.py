@@ -5,7 +5,7 @@ import sys
 
 from log_config import init_logging, get_logger
 
-SETTINGS_PATH = "settings.json"
+SETTINGS_PATH = "config/settings.json"
 
 def load_settings(settings_path):
     with open(settings_path, "r") as f:

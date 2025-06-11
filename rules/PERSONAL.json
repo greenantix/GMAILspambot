@@ -2,24 +2,34 @@
   "keywords": [
     "meeting",
     "appointment",
+    "schedule",
+    "viewing",
+    "application",
     "housing",
     "real estate",
-    "rental",
-    "application",
-    "viewing",
     "property",
-    "address"
+    "rental",
+    "contact"
   ],
   "senders": [
     "@gmail.com",
     "@outlook.com",
     "@yahoo.com",
-    "realtor@",
-    "zillow@",
-    "trulia@",
-    "rentcafe@",
+    "zillow.com",
+    "no-reply@mail.zillow.com",
+    "convo.zillow.com",
+    "rental-instant-updates@mail.zillow.com",
+    "market-updates@mail.zillow.com",
+    "hello@update.trulia.com",
+    "listings@redfin.com",
+    "info@notifications.realtor.com",
     "leasing@",
-    "property@",
-    "rental@"
+    "lschaefer@waypointservices.org",
+    "lisa@gbhproperty.com",
+    "rentcafe.com",
+    "no-reply@rentcafe.com",
+    "residenceon11th@emailrelay.com",
+    "system@entrata.com",
+    "info@emp.apartmentlist.com"
   ]
 }

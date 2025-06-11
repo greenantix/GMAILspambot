@@ -11,9 +11,9 @@
     "billing@",
     "statements@",
     "bank@",
+    "taxes@",
     "finance@",
-    "tax@",
-    "invoice@",
-    "payments@"
+    "dave@mail.dave.com",
+    "invoice+statements@mail.anthropic.com"
   ]
 }

@@ -69,20 +69,20 @@ fi
 # Display status
 echo ""
 echo "📊 Current Status:"
-if [ -f "settings.json" ]; then
-    echo "   ✓ Settings file preserved: settings.json"
+if [ -f "config/settings.json" ]; then
+    echo "   ✓ Settings file preserved: config/settings.json"
 else
     echo "   ℹ️  No settings file found"
 fi
 
-if [ -f "token.json" ]; then
-    echo "   ✓ Authentication token preserved: token.json"
+if [ -f "config/token.json" ]; then
+    echo "   ✓ Authentication token preserved: config/token.json"
 else
     echo "   ℹ️  No authentication token found"
 fi
 
-if [ -f "credentials.json" ]; then
-    echo "   ✓ Gmail credentials preserved: credentials.json"
+if [ -f "config/credentials.json" ]; then
+    echo "   ✓ Gmail credentials preserved: config/credentials.json"
 else
     echo "   ⚠️  No Gmail credentials found"
 fi

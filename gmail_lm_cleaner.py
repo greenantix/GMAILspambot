@@ -41,6 +41,77 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
+GEMINI_ANALYSIS_PROMPT = """Analyze these email subjects and create a comprehensive email management strategy.
+
+{subjects_content}
+
+ADVANCED ANALYSIS TASKS:
+1. Identify email patterns and clusters
+2. Suggest new categories based on actual email content
+3. Recommend sender-based rules with confidence scores
+4. Identify time-based patterns (newsletters on Tuesdays, bills on 1st, etc.)
+5. Suggest label hierarchy (parent/child labels)
+6. Recommend automation rules for recurring patterns
+7. Identify potentially important emails that might be miscategorized
+8. Suggest filter improvements for existing rules
+
+OUTPUT FORMAT:
+{
+  "categories": {
+    "new_categories": [
+      {
+        "name": "CATEGORY_NAME",
+        "description": "What this category is for",
+        "parent_label": "PARENT_CATEGORY or null",
+        "color": {"background": "#hex", "text": "#hex"},
+        "auto_archive": true/false,
+        "retention_days": 30
+      }
+    ],
+    "category_rules": {
+      "CATEGORY": {
+        "keywords": ["keyword1", "keyword2"],
+        "senders": ["pattern1", "pattern2"],
+        "subject_patterns": ["regex1", "regex2"],
+        "confidence_threshold": 0.8,
+        "time_patterns": {
+          "day_of_week": [1,2,3,4,5],
+          "time_of_day": "morning|afternoon|evening|night"
+        }
+      }
+    }
+  },
+  "gmail_filters": [
+    {
+      "name": "Filter Name",
+      "criteria": {
+        "from": "sender pattern",
+        "subject": "subject pattern",
+        "has_attachment": true/false
+      },
+      "actions": {
+        "label": "CATEGORY",
+        "archive": true/false,
+        "mark_important": true/false,
+        "forward_to": "email@example.com"
+      },
+      "confidence": 0.95
+    }
+  ],
+  "cleanup_suggestions": {
+    "merge_labels": [["OLD_LABEL", "INTO_LABEL"]],
+    "delete_labels": ["UNUSED_LABEL"],
+    "rename_labels": {"OLD_NAME": "NEW_NAME"}
+  },
+  "insights": {
+    "email_volume_by_category": {},
+    "peak_email_times": {},
+    "top_senders": [],
+    "unsubscribe_candidates": []
+  }
+}
+"""
+
 # Settings configuration
 DEFAULT_SETTINGS = {
     "important_keywords": [
@@ -50,7 +121,7 @@ DEFAULT_SETTINGS = {
         "urgent action required", "account expires", "verification code"
     ],
     "important_senders": [
-        "security@", "alerts@", "fraud@", "admin@", 
+        "security@", "alerts@", "fraud@", "admin@",
         "billing@", "accounts@", "statements@"
     ],
     "promotional_keywords": [
@@ -65,8 +136,61 @@ DEFAULT_SETTINGS = {
     "lm_studio_model": "auto"
 }
 
+class EmailLearningEngine:
+    def __init__(self, history_file='logs/categorization_history.json'):
+        self.history_file = history_file
+        self.logger = logging.getLogger("EmailLearningEngine")
+        self.categorization_history = self.load_history()
+
+    def load_history(self):
+        """Load categorization history from a file."""
+        if os.path.exists(self.history_file):
+            try:
+                with open(self.history_file, 'r') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                self.logger.error(f"Error loading history file: {e}")
+                return []
+        return []
+
+    def save_history(self):
+        """Save categorization history to a file."""
+        try:
+            os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+            with open(self.history_file, 'w') as f:
+                json.dump(self.categorization_history, f, indent=2)
+        except IOError as e:
+            self.logger.error(f"Error saving history file: {e}")
+
+    def record_categorization(self, email_data, decision, user_override=None):
+        """Track all categorization decisions and user corrections."""
+        record = {
+            'timestamp': datetime.now().isoformat(),
+            'email_id': email_data.get('id'),
+            'subject': email_data.get('subject'),
+            'sender': email_data.get('sender'),
+            'llm_action': decision.get('action'),
+            'llm_reason': decision.get('reason'),
+            'confidence': decision.get('confidence'),
+            'user_override': user_override
+        }
+        self.categorization_history.append(record)
+        self.save_history() # Save after each record for persistence
+
+    def suggest_rule_updates(self):
+        """Analyze history to suggest new rules or modifications."""
+        # Placeholder for future implementation
+        self.logger.info("Analyzing history for rule update suggestions...")
+        return {}
+
+    def detect_new_patterns(self):
+        """Identify emerging email patterns that need new categories."""
+        # Placeholder for future implementation
+        self.logger.info("Detecting new email patterns...")
+        return []
+
 class GmailLMCleaner:
-    def __init__(self, credentials_file='credentials.json', token_file='token.json', settings_file='settings.json'):
+    def __init__(self, credentials_file='config/credentials.json', token_file='config/token.json', settings_file='config/settings.json'):
         self.credentials_file = credentials_file
         self.token_file = token_file
         self.settings_file = settings_file
@@ -74,6 +198,7 @@ class GmailLMCleaner:
         self.settings = self.load_settings()
         self.llm_prompts = self.load_llm_prompts() # Load LLM prompts
         self.logger = self.setup_logging()
+        self.learning_engine = EmailLearningEngine()
         self.setup_gmail_service()
         
     def load_settings(self):
@@ -127,10 +252,11 @@ class GmailLMCleaner:
         
         return logger
     
-    def log_email_processing(self, email_id, subject, decision, reason):
-        """Log email processing details."""
+    def log_email_processing(self, email_id, subject, decision, reason, confidence=None):
+        """Log email processing details with confidence scoring."""
+        confidence_str = f" | Confidence: {confidence:.2f}" if confidence is not None else ""
         self.logger.info(f"Processed: {email_id} | {subject[:50]}... | "
-                        f"Decision: {decision} | Reason: {reason}")
+                        f"Decision: {decision} | Reason: {reason}{confidence_str}")
     
     def load_llm_prompts(self):
         """Load LLM prompts from settings file."""
@@ -152,24 +278,76 @@ class GmailLMCleaner:
             json.dump(self.settings, f, indent=2)
         
     def setup_gmail_service(self):
-        """Authenticate and create Gmail service instance."""
-        creds = None
-        
-        if os.path.exists(self.token_file):
-            creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
-        
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    self.credentials_file, SCOPES)
-                creds = flow.run_local_server(port=0)
-            
-            with open(self.token_file, 'w') as token:
-                token.write(creds.to_json())
-        
-        self.service = build('gmail', 'v1', credentials=creds)
+        """Authenticate and create Gmail service instance with auto-reconnection."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                creds = None
+                
+                if os.path.exists(self.token_file):
+                    creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
+                
+                if not creds or not creds.valid:
+                    if creds and creds.expired and creds.refresh_token:
+                        try:
+                            creds.refresh(Request())
+                        except Exception as e:
+                            if hasattr(self, 'logger'):
+                                self.logger.warning(f"Token refresh failed: {e}, re-authenticating...")
+                            # Delete expired token and re-authenticate
+                            if os.path.exists(self.token_file):
+                                os.remove(self.token_file)
+                            creds = None
+                    
+                    if not creds:
+                        flow = InstalledAppFlow.from_client_secrets_file(
+                            self.credentials_file, SCOPES)
+                        creds = flow.run_local_server(port=0)
+                    
+                    with open(self.token_file, 'w') as token:
+                        token.write(creds.to_json())
+                
+                self.service = build('gmail', 'v1', credentials=creds)
+                
+                # Test the connection
+                try:
+                    self.service.users().getProfile(userId='me').execute()
+                    if hasattr(self, 'logger'):
+                        self.logger.info("Gmail connection established successfully")
+                    return  # Success, exit retry loop
+                except Exception as e:
+                    if hasattr(self, 'logger'):
+                        self.logger.warning(f"Gmail connection test failed: {e}")
+                    raise e
+                    
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    if hasattr(self, 'logger'):
+                        self.logger.warning(f"Gmail setup attempt {attempt + 1} failed: {e}, retrying...")
+                    # Clean up and retry
+                    if os.path.exists(self.token_file):
+                        os.remove(self.token_file)
+                else:
+                    if hasattr(self, 'logger'):
+                        self.logger.error(f"Gmail setup failed after {max_retries} attempts: {e}")
+                    raise e
+
+    def ensure_gmail_connection(self):
+        """Ensure Gmail connection is active, reconnect if needed."""
+        try:
+            # Quick test to see if connection is alive
+            self.service.users().getProfile(userId='me').execute()
+            return True
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.warning(f"Gmail connection lost: {e}, reconnecting...")
+            try:
+                self.setup_gmail_service()
+                return True
+            except Exception as reconnect_error:
+                if hasattr(self, 'logger'):
+                    self.logger.error(f"Reconnection failed: {reconnect_error}")
+                return False
     
     def get_email_content(self, msg_id):
         """Fetch and decode email content."""
@@ -218,23 +396,113 @@ class GmailLMCleaner:
         
         return body
     
-    def is_important_email(self, email_data):
-        """Check if email contains important keywords or is from important sender."""
-        subject_lower = email_data.get('subject', '').lower()
-        sender_lower = email_data.get('sender', '').lower()
-        body_lower = email_data.get('body', '').lower()
+    def is_critical_email(self, email_data):
+        """Check if email is INBOX-level critical (interrupts dinner)."""
+        subject = email_data.get('subject', '').lower()
+        sender = email_data.get('sender', '').lower()
+        body = email_data.get('body', '').lower()
         
-        # Check important keywords
-        for keyword in self.settings['important_keywords']:
-            if keyword.lower() in subject_lower or keyword.lower() in body_lower:
+        # Ultra-high priority triggers
+        critical_keywords = [
+            'security alert', 'account suspended', 'verify immediately', 'fraud detected',
+            'password reset', 'unauthorized access', 'login attempt', 'payment failed',
+            'account expires', 'urgent action required', 'expires today', 'deadline'
+        ]
+        
+        # Critical sender patterns (only truly urgent stuff)
+        critical_senders = [
+            'security@', 'fraud@', 'admin@', 'urgent@', 'critical@',
+            'noreply@paypal.com', 'alerts@chase.com'  # Financial security only
+        ]
+        
+        # Check for critical senders
+        for critical_sender in critical_senders:
+            if critical_sender in sender:
                 return True
         
-        # Check important senders
-        for sender_pattern in self.settings['important_senders']:
-            if sender_pattern.lower() in sender_lower:
+        # Check for critical keywords
+        full_text = (subject + ' ' + body).lower()
+        for keyword in critical_keywords:
+            if keyword in full_text:
+                return True
+        
+        # Check if it's a personal human (not automated)
+        if self.is_personal_human_sender(sender, email_data):
+            return True
+            
+        return False
+
+    def is_priority_email(self, email_data):
+        """Check if email is PRIORITY-level (morning coffee review)."""
+        subject = email_data.get('subject', '').lower()
+        sender = email_data.get('sender', '').lower()
+        body = email_data.get('body', '').lower()
+        
+        # Priority patterns - important but not urgent
+        priority_patterns = {
+            'github': {
+                'senders': ['notifications@github.com', 'noreply@github.com', '@github.com'],
+                'keywords': ['pull request', 'issue', 'release', 'security advisory', 'mentioned you']
+            },
+            'real_estate': {
+                'senders': ['@zillow.com', '@redfin.com', '@realtor.com', '@apartments.com'],
+                'keywords': ['property alert', 'price changed', 'new listing', 'market update']
+            },
+            'financial_monitoring': {
+                'senders': ['statements@', 'alerts@chase.com', '@bankofamerica.com', 'credit@'],
+                'keywords': ['statement ready', 'credit report', 'account summary', 'balance alert']
+            },
+            'work_notifications': {
+                'senders': ['@slack.com', '@atlassian.com', '@microsoft.com', '@asana.com'],
+                'keywords': ['mentioned you', 'assigned', 'due date', 'project update']
+            },
+            'service_accounts': {
+                'senders': ['@amazonaws.com', '@heroku.com', '@digitalocean.com', '@stripe.com'],
+                'keywords': ['service update', 'billing', 'usage alert', 'deployment']
+            }
+        }
+        
+        # Check each priority pattern
+        for pattern_name, pattern in priority_patterns.items():
+            # Check senders
+            for sender_pattern in pattern['senders']:
+                if sender_pattern in sender:
+                    return True
+            
+            # Check keywords in context
+            full_text = (subject + ' ' + body).lower()
+            keyword_matches = 0
+            for keyword in pattern['keywords']:
+                if keyword in full_text:
+                    keyword_matches += 1
+            
+            # If multiple keywords match, it's likely priority
+            if keyword_matches >= 1:
                 return True
         
         return False
+
+    def is_personal_human_sender(self, sender, email_data):
+        """Detect if sender is a real person (not automated)."""
+        # Simple heuristics for human detection
+        human_indicators = [
+            # Not from common automated domains
+            not any(auto_domain in sender for auto_domain in [
+                'noreply@', 'no-reply@', 'donotreply@', 'notifications@', 
+                'support@', 'alerts@', 'admin@', 'info@'
+            ]),
+            # Contains typical personal domains (common but not foolproof)
+            any(personal_domain in sender for personal_domain in [
+                '@gmail.com', '@yahoo.com', '@hotmail.com', '@outlook.com'
+            ])
+        ]
+        
+        # If multiple indicators suggest human, likely personal
+        return sum(human_indicators) >= 1
+
+    def is_important_email(self, email_data):
+        """Legacy method - now checks for critical OR priority."""
+        return self.is_critical_email(email_data) or self.is_priority_email(email_data)
     
     def is_promotional_email(self, email_data):
         """Check if email is promotional."""
@@ -248,13 +516,241 @@ class GmailLMCleaner:
         
         return promo_count >= 2  # Require at least 2 promotional keywords
     
+    def generate_dynamic_llm_prompt(self):
+        """
+        Generate LLM prompt based on current system state.
+        
+        Includes:
+        - All existing Gmail labels
+        - Category rules from JSON files
+        - Recent categorization patterns
+        - User corrections/feedback
+        """
+        try:
+            # Get all current labels
+            labels = self.get_all_gmail_labels()
+            
+            # Load all rule files
+            rules = self.load_all_category_rules()
+            
+            # Build dynamic prompt
+            categories_info = self.format_categories_with_descriptions(labels, rules)
+            learned_patterns = self.get_learned_patterns()
+            user_preferences = self.get_user_preferences()
+            
+            prompt_template = f"""Email categorization assistant. Respond ONLY with valid JSON.
+
+VALID CATEGORIES: INBOX, PRIORITY, BILLS, SHOPPING, NEWSLETTERS, SOCIAL, PERSONAL, JUNK, REVIEW
+
+RULES:
+- INBOX: Critical/urgent only (security alerts, personal humans, true emergencies)
+- PRIORITY: Important but not urgent (GitHub, Zillow, bank statements, work notifications)
+- BILLS: Receipts, invoices, financial documents
+- SHOPPING: Orders, promotions, retail
+- NEWSLETTERS: News, updates, content
+- SOCIAL: Social media, gaming, apps
+- PERSONAL: Non-urgent personal messages, scheduling
+- JUNK: Spam, irrelevant content
+- REVIEW: Uncertain emails (confidence < 0.7)
+
+FORMAT: {{"action": "CATEGORY", "reason": "brief explanation", "confidence": 0.0-1.0}}
+
+QUICK PATTERNS:
+- security@, fraud@, personal humans → INBOX (high confidence)
+- github@, zillow@, bank statements → PRIORITY (important but not urgent)
+- receipts, invoices, billing → BILLS
+- orders, shipping, promotions → SHOPPING
+- newsletters, unsubscribe → NEWSLETTERS
+- facebook, twitter, gaming → SOCIAL
+
+THINK: Would this interrupt dinner with family, or can it wait for morning coffee review?"""
+            
+            return prompt_template
+            
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Error generating dynamic prompt: {str(e)}")
+            # Fallback to simple categories if dynamic generation fails
+            return self.get_fallback_prompt()
+
+    def get_all_gmail_labels(self):
+        """Get all existing Gmail labels."""
+        try:
+            results = self.service.users().labels().list(userId='me').execute()
+            labels = results.get('labels', [])
+            
+            # Filter out system labels and only return user-created ones relevant to categorization
+            user_labels = []
+            system_labels = ['INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'STARRED', 'IMPORTANT', 'UNREAD']
+            category_labels = ['BILLS', 'SHOPPING', 'NEWSLETTERS', 'SOCIAL', 'PERSONAL', 'JUNK', 'REVIEW']
+            
+            for label in labels:
+                label_name = label['name']
+                if label_name in category_labels or (label_name not in system_labels and not label_name.startswith('Label_')):
+                    user_labels.append({
+                        'name': label_name,
+                        'id': label['id'],
+                        'type': label.get('type', 'user')
+                    })
+            
+            return user_labels
+            
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Error getting Gmail labels: {str(e)}")
+            return []
+
+    def load_all_category_rules(self):
+        """Load all category rules from settings and rule files."""
+        all_rules = {}
+        
+        # Load from settings.json
+        if hasattr(self, 'settings') and 'category_rules' in self.settings:
+            all_rules.update(self.settings['category_rules'])
+        
+        # Load from individual rule files in rules/ directory
+        rules_dir = 'rules'
+        if os.path.exists(rules_dir):
+            for filename in os.listdir(rules_dir):
+                if filename.endswith('.json'):
+                    category_name = filename[:-5]  # Remove .json extension
+                    try:
+                        with open(os.path.join(rules_dir, filename), 'r') as f:
+                            rule_data = json.load(f)
+                            all_rules[category_name] = rule_data
+                    except Exception as e:
+                        if hasattr(self, 'logger'):
+                            self.logger.warning(f"Could not load rule file {filename}: {str(e)}")
+        
+        return all_rules
+
+    def format_categories_with_descriptions(self, labels, rules):
+        """Format categories with their descriptions and rules for the prompt."""
+        formatted_categories = []
+        
+        # Standard categories with descriptions
+        standard_categories = {
+            'INBOX': 'Critical/urgent only - security alerts, personal humans, true emergencies that interrupt dinner',
+            'PRIORITY': 'Important but not urgent - GitHub, Zillow, bank statements, work notifications for morning coffee review',
+            'BILLS': 'Receipts, invoices, payment confirmations, bank statements, tax documents',
+            'SHOPPING': 'Order confirmations, shipping updates, product launches, store promotions',
+            'NEWSLETTERS': 'Newsletters, tech updates, news digests, educational content',
+            'SOCIAL': 'Social media notifications, gaming updates, app notifications',
+            'PERSONAL': 'Non-urgent personal messages, scheduling, real estate, housing',
+            'JUNK': 'Obvious spam, irrelevant promotions, suspicious emails',
+            'REVIEW': 'Uncertain emails requiring human review (confidence < 0.7)'
+        }
+        
+        # Add custom labels from Gmail
+        for label in labels:
+            label_name = label['name']
+            if label_name in standard_categories:
+                description = standard_categories[label_name]
+                
+                # Add specific rules if available
+                rule_details = ""
+                if label_name in rules:
+                    rule_data = rules[label_name]
+                    keywords = rule_data.get('keywords', [])
+                    senders = rule_data.get('senders', [])
+                    
+                    if keywords:
+                        rule_details += f" | Keywords: {', '.join(keywords[:5])}"
+                    if senders:
+                        rule_details += f" | Senders: {', '.join(senders[:5])}"
+                
+                formatted_categories.append(f"- {label_name}: {description}{rule_details}")
+            else:
+                # Custom label - try to infer purpose
+                formatted_categories.append(f"- {label_name}: Custom category (adapt based on context)")
+        
+        return "\n".join(formatted_categories)
+
+    def get_learned_patterns(self):
+        """Get learned patterns from email processing history."""
+        # This would analyze processing logs and identify patterns
+        # For now, return a placeholder that could be expanded
+        patterns = [
+            "- Emails with 'security@' senders are typically INBOX priority",
+            "- Newsletters often arrive on specific days (Mondays/Tuesdays)",
+            "- Shopping emails increase during sale periods",
+            "- Bill-related emails often contain specific account numbers or amounts"
+        ]
+        
+        # TODO: Implement actual pattern learning from logs
+        # This could analyze the logs/email_processing.log file for patterns
+        
+        return "\n".join(patterns)
+
+    def get_user_preferences(self):
+        """Get user-specific preferences and corrections."""
+        preferences = []
+        
+        # Load from settings
+        if hasattr(self, 'settings'):
+            important_keywords = self.settings.get('important_keywords', [])
+            if important_keywords:
+                preferences.append(f"- Important keywords: {', '.join(important_keywords[:10])}")
+            
+            promotional_keywords = self.settings.get('promotional_keywords', [])
+            if promotional_keywords:
+                preferences.append(f"- Promotional indicators: {', '.join(promotional_keywords[:10])}")
+            
+            never_delete = self.settings.get('never_delete_senders', [])
+            if never_delete:
+                preferences.append(f"- Never delete from: {', '.join(never_delete)}")
+        
+        # TODO: Load user corrections from a feedback log
+        # preferences.append("- User corrections: [specific feedback patterns]")
+        
+        return "\n".join(preferences) if preferences else "- No specific preferences recorded yet"
+
+    def get_fallback_prompt(self):
+        """Fallback prompt if dynamic generation fails."""
+        return """You are an email categorization assistant. Analyze this email and categorize it.
+
+CATEGORIES:
+- INBOX: Urgent/critical emails only
+- BILLS: Financial/payment related
+- SHOPPING: Commerce/retail related  
+- NEWSLETTERS: Information/updates
+- SOCIAL: Social/gaming/apps
+- PERSONAL: Personal correspondence
+- JUNK: Spam/irrelevant
+- REVIEW: Uncertain emails
+
+Respond in JSON format:
+{"action": "CATEGORY_NAME", "reason": "brief reason", "confidence": 0.0-1.0}"""
+
     def build_categorization_prompt(self, email_data):
-        """Build a structured prompt for email categorization matching LM Studio system prompt."""
-        prompt = f"""Analyze this email:
+        """Build a dynamic prompt for email categorization using current system state."""
+        try:
+            # Generate the dynamic base prompt
+            base_prompt = self.generate_dynamic_llm_prompt()
+            
+            # Add specific email data
+            email_prompt = f"""
+EMAIL TO ANALYZE:
 Subject: {email_data['subject']}
 From: {email_data['sender']}
-Preview: {email_data['body_preview']}"""
-        return prompt
+Date: {email_data.get('date', 'Unknown')}
+Body Preview: {email_data['body_preview']}
+
+Please categorize this email following the rules above."""
+            
+            return base_prompt + email_prompt
+            
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Error building categorization prompt: {str(e)}")
+            
+            # Fallback to simple prompt
+            return f"""Analyze this email:
+Subject: {email_data['subject']}
+From: {email_data['sender']}
+Preview: {email_data['body_preview']}
+
+Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence": 0.0-1.0}}"""
 
     def call_lm_studio(self, prompt, timeout=30):
         """Call LM Studio with proper error handling."""
@@ -267,8 +763,8 @@ Preview: {email_data['body_preview']}"""
                 "max_tokens": 100
             }
             
-            # Add model selection if specified
-            model_name = self.settings.get('lm_studio_model', 'auto')
+            # Add model selection - use Llama-3.1-8B
+            model_name = self.settings.get('lm_studio_model', 'meta-llama-3.1-8b-instruct')
             if model_name and model_name != 'auto':
                 payload['model'] = model_name
             
@@ -298,20 +794,157 @@ Preview: {email_data['body_preview']}"""
             return {"action": "KEEP", "reason": f"LLM error: {str(e)}"}
 
     def validate_llm_decision(self, decision):
-        """Validate and sanitize LLM decision."""
-        valid_actions = ["INBOX", "BILLS", "SHOPPING", "NEWSLETTERS", "SOCIAL", "PERSONAL", "JUNK", "KEEP"]
+        """Validate and sanitize LLM decision with confidence scoring."""
+        valid_actions = ["INBOX", "PRIORITY", "BILLS", "SHOPPING", "NEWSLETTERS", "SOCIAL", "PERSONAL", "JUNK", "KEEP", "REVIEW"]
         
         if not isinstance(decision, dict):
-            return {"action": "KEEP", "reason": "Invalid decision format"}
+            return {"action": "KEEP", "reason": "Invalid decision format", "confidence": 0.0}
         
         action = decision.get('action', 'KEEP').upper()
         if action not in valid_actions:
-            return {"action": "KEEP", "reason": f"Invalid action: {action}"}
+            return {"action": "KEEP", "reason": f"Invalid action: {action}", "confidence": 0.0}
         
         reason = str(decision.get('reason', 'No reason provided'))[:200]
         
-        return {"action": action, "reason": reason}
+        # Handle confidence scoring
+        confidence = decision.get('confidence', 0.5)
+        try:
+            confidence = float(confidence)
+            # Ensure confidence is between 0.0 and 1.0
+            confidence = max(0.0, min(1.0, confidence))
+        except (ValueError, TypeError):
+            confidence = 0.5  # Default to medium confidence
+        
+        # Automatic REVIEW routing for low confidence
+        if confidence < 0.7 and action not in ['KEEP', 'REVIEW']:
+            return {
+                "action": "REVIEW", 
+                "reason": f"Low confidence ({confidence:.2f}) for {action}: {reason}", 
+                "confidence": confidence,
+                "original_action": action
+            }
+        
+        return {"action": action, "reason": reason, "confidence": confidence}
     
+    def harvest_existing_filters(self):
+        """Extract existing Gmail filters for bulk application."""
+        try:
+            filters = self.service.users().settings().filters().list(userId='me').execute()
+            filter_list = filters.get('filter', [])
+            
+            processed_filters = []
+            for gmail_filter in filter_list:
+                criteria = gmail_filter.get('criteria', {})
+                action = gmail_filter.get('action', {})
+                
+                # Convert to our format
+                filter_rule = {
+                    'id': gmail_filter.get('id'),
+                    'criteria': criteria,
+                    'action': action,
+                    'query': self.build_query_from_criteria(criteria)
+                }
+                processed_filters.append(filter_rule)
+            
+            return processed_filters
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Error harvesting filters: {str(e)}")
+            return []
+
+    def build_query_from_criteria(self, criteria):
+        """Convert filter criteria to Gmail search query."""
+        query_parts = []
+        
+        if criteria.get('from'):
+            query_parts.append(f"from:{criteria['from']}")
+        if criteria.get('to'):
+            query_parts.append(f"to:{criteria['to']}")
+        if criteria.get('subject'):
+            query_parts.append(f"subject:\"{criteria['subject']}\"")
+        if criteria.get('query'):
+            query_parts.append(criteria['query'])
+        if criteria.get('hasWords'):
+            query_parts.append(criteria['hasWords'])
+        
+        return ' '.join(query_parts)
+
+    def apply_existing_filters_to_backlog(self, log_callback=None, max_emails_per_filter=1000):
+        """Apply existing Gmail filters to unread emails first (before AI processing)."""
+        if log_callback:
+            log_callback("🔧 Applying existing Gmail filters to backlog...")
+        
+        try:
+            # Get existing filters
+            filters = self.harvest_existing_filters()
+            if not filters:
+                if log_callback:
+                    log_callback("   No existing filters found")
+                return 0
+            
+            total_processed = 0
+            
+            for i, filter_rule in enumerate(filters):
+                if not filter_rule.get('query'):
+                    continue
+                
+                try:
+                    # Find messages matching this filter
+                    query = f"is:unread in:inbox {filter_rule['query']}"
+                    
+                    results = self.service.users().messages().list(
+                        userId='me',
+                        q=query,
+                        maxResults=max_emails_per_filter
+                    ).execute()
+                    
+                    messages = results.get('messages', [])
+                    if not messages:
+                        continue
+                    
+                    if log_callback:
+                        log_callback(f"   Filter {i+1}/{len(filters)}: Found {len(messages)} matching emails")
+                    
+                    # Apply filter actions in batches
+                    batch_size = 100
+                    for j in range(0, len(messages), batch_size):
+                        batch = messages[j:j+batch_size]
+                        message_ids = [msg['id'] for msg in batch]
+                        
+                        # Build modify request
+                        modify_request = {}
+                        if filter_rule['action'].get('addLabelIds'):
+                            modify_request['addLabelIds'] = filter_rule['action']['addLabelIds']
+                        if filter_rule['action'].get('removeLabelIds'):
+                            modify_request['removeLabelIds'] = filter_rule['action']['removeLabelIds']
+                        
+                        # Apply batch modification
+                        if modify_request:
+                            self.service.users().messages().batchModify(
+                                userId='me',
+                                body={
+                                    'ids': message_ids,
+                                    **modify_request
+                                }
+                            ).execute()
+                            
+                            total_processed += len(batch)
+                
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"   ⚠️ Error applying filter: {str(e)[:100]}")
+                    continue
+            
+            if log_callback:
+                log_callback(f"✅ Applied existing filters to {total_processed} emails")
+            
+            return total_processed
+            
+        except Exception as e:
+            if log_callback:
+                log_callback(f"❌ Error in filter application: {str(e)}")
+            return 0
+
     def setup_gmail_filters(self, log_callback=None):
         """Set up Gmail filters based on category rules for automatic processing."""
         if log_callback:
@@ -602,13 +1235,17 @@ Preview: {email_data['body_preview']}"""
             if any(auto_delete in sender for auto_delete in self.settings['auto_delete_senders']):
                 return {"action": "JUNK", "reason": "Sender in auto-delete list"}
             
-            # Check importance
-            if self.is_important_email(email_data):
-                return {"action": "INBOX", "reason": "Contains important keywords"}
+            # Check for critical emails (INBOX level)
+            if self.is_critical_email(email_data):
+                return {"action": "INBOX", "reason": "Critical email requiring immediate attention", "confidence": 0.9}
+            
+            # Check for priority emails (important but not urgent)
+            if self.is_priority_email(email_data):
+                return {"action": "PRIORITY", "reason": "Important account activity for morning review", "confidence": 0.8}
             
             # Check for promotional content
             if self.is_promotional_email(email_data):
-                return {"action": "SHOPPING", "reason": "Promotional email"}
+                return {"action": "SHOPPING", "reason": "Promotional email", "confidence": 0.7}
             
             # Prepare safe data for LLM
             safe_email_data = {
@@ -669,10 +1306,6 @@ Preview: {email_data['body_preview']}"""
     def execute_action(self, email_id, action, reason, log_callback=None):
         """Execute the decided action on the email."""
         try:
-            if self.settings['dry_run']:
-                if log_callback:
-                    log_callback(f"  [DRY RUN] Would move to {action}: {reason}")
-                return
             
             if action == "JUNK":
                 # Move to trash
@@ -709,17 +1342,22 @@ Preview: {email_data['body_preview']}"""
                     ).execute()
                     
                     folder_emoji = {
+                        'PRIORITY': '⚡',
                         'BILLS': '💰',
                         'SHOPPING': '🛒',
                         'NEWSLETTERS': '📰',
                         'SOCIAL': '👥',
-                        'PERSONAL': '📧'
+                        'PERSONAL': '📧',
+                        'REVIEW': '🤔'
                     }
                     
                     emoji = folder_emoji.get(action, '📁')
                     
                     if log_callback:
-                        log_callback(f"  {emoji} Moved to {action}: {reason}")
+                        if action == 'REVIEW':
+                            log_callback(f"  {emoji} Moved to REVIEW (needs human review): {reason}")
+                        else:
+                            log_callback(f"  {emoji} Moved to {action}: {reason}")
                 else:
                     if log_callback:
                         log_callback(f"  ✗ Failed to create label for {action}")
@@ -783,7 +1421,8 @@ Preview: {email_data['body_preview']}"""
                         email_data['id'],
                         email_data.get('subject', 'No Subject'),
                         decision['action'],
-                        decision['reason']
+                        decision['reason'],
+                        decision.get('confidence')
                     )
                 
                 self.execute_action(
@@ -799,6 +1438,226 @@ Preview: {email_data['body_preview']}"""
         except Exception as e:
             if log_callback:
                 log_callback(f'An error occurred: {e}')
+        finally:
+            # After processing, suggest rule updates based on the session
+            self.learning_engine.suggest_rule_updates()
+            self.learning_engine.detect_new_patterns()
+    
+    def process_email_backlog(self, batch_size=100, older_than_days=0, log_callback=None, progress_callback=None, pause_callback=None):
+        """
+        Process all unread emails to get to inbox zero.
+        
+        Features:
+        - Process emails in batches to avoid rate limits
+        - Show progress with ability to pause/resume
+        - Log all actions for review
+        - Option to process only emails older than X days
+        - Returns processing statistics
+        """
+        if log_callback:
+            log_callback("🚀 Starting bulk unread email cleanup...")
+        
+        # Build query for unread emails
+        query_parts = ['is:unread', 'in:inbox']
+        
+        if older_than_days > 0:
+            date_before = (datetime.now() - timedelta(days=older_than_days)).strftime('%Y/%m/%d')
+            query_parts.append(f'before:{date_before}')
+            if log_callback:
+                log_callback(f"📅 Processing unread emails older than {older_than_days} days")
+        else:
+            if log_callback:
+                log_callback("📧 Processing ALL unread emails")
+        
+        query = ' '.join(query_parts)
+        
+        # Initialize statistics
+        stats = {
+            'total_found': 0,
+            'total_processed': 0,
+            'by_category': {},
+            'errors': 0,
+            'batch_count': 0,
+            'start_time': datetime.now()
+        }
+        
+        try:
+            # Ensure Gmail connection before starting
+            if not self.ensure_gmail_connection():
+                if log_callback:
+                    log_callback("❌ Failed to establish Gmail connection")
+                return stats
+            
+            # Get total count first for accurate progress
+            if log_callback:
+                log_callback(f"🔍 Getting total unread email count...")
+            
+            total_messages = 0
+            try:
+                # Get the number of unread messages in the inbox.
+                # This is a reliable count for the most common use case.
+                # If the query is more complex (e.g., with 'older_than'), this count is an approximation.
+                inbox_label_data = self.service.users().labels().get(userId='me', id='INBOX').execute()
+                total_messages = inbox_label_data.get('messagesUnread', 0)
+                
+                stats['total_found'] = total_messages
+                if log_callback:
+                    log_callback(f"📊 Found {total_messages} unread emails in the inbox.")
+                if progress_callback:
+                    progress_callback(0, total_messages) # Update progress bar immediately
+            except Exception as e:
+                if log_callback:
+                    log_callback(f"⚠️ Could not get unread count from INBOX label: {e}. Will count as emails are fetched.")
+                stats['total_found'] = 0 # We'll count as we go
+
+            # Efficient batch processing: fetch large chunks, process in smaller batches
+            next_page_token = None
+            processed_count = 0
+            fetch_size = min(500, batch_size * 10)  # Fetch larger chunks efficiently
+            
+            if log_callback:
+                log_callback(f"🚀 Processing 75k+ emails efficiently!")
+                log_callback(f"📊 Fetching {fetch_size} emails per API call, processing {batch_size} at a time")
+            
+            while True:
+                try:
+                    # Fetch large chunk of email IDs efficiently
+                    results = self.service.users().messages().list(
+                        userId='me',
+                        q=query,
+                        maxResults=fetch_size,  # Fetch efficiently
+                        pageToken=next_page_token
+                    ).execute()
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"❌ Error fetching email batch: {e}")
+                    stats['errors'] += 1
+                    break
+
+                messages = results.get('messages', [])
+                if not messages:
+                    if log_callback:
+                        log_callback("✅ No more emails to process")
+                    break
+                
+                if log_callback:
+                    log_callback(f"📥 Fetched {len(messages)} emails, processing in sub-batches...")
+                
+                # Process this chunk in smaller batches
+                for i in range(0, len(messages), batch_size):
+                    sub_batch = messages[i:i+batch_size]
+                    stats['batch_count'] += 1
+                    
+                    if log_callback:
+                        log_callback(f"\n📦 Batch {stats['batch_count']}: Processing {len(sub_batch)} emails")
+                    
+                    # Process each email in this sub-batch
+                    for msg in sub_batch:
+                        try:
+                            # Check for pause
+                            if pause_callback and pause_callback():
+                                if log_callback:
+                                    log_callback("⏸️ Processing paused by user")
+                                return stats
+                            
+                            processed_count += 1
+                            
+                            # Update progress 
+                            if progress_callback:
+                                progress_callback(processed_count, total_messages if total_messages > 0 else processed_count)
+                            
+                            # Get email content
+                            email_data = self.get_email_content(msg['id'])
+                            if not email_data:
+                                stats['errors'] += 1
+                                continue
+                            
+                            # Log email being processed (every 10th to avoid spam)
+                            if log_callback and processed_count % 10 == 0:
+                                subject_preview = email_data.get('subject', 'No Subject')[:50]
+                                log_callback(f"  📧 [{processed_count}] {subject_preview}...")
+                            
+                            # Analyze email
+                            decision = self.analyze_email_with_llm(email_data)
+                            action = decision['action']
+                            reason = decision['reason']
+                            
+                            # Update statistics
+                            stats['by_category'][action] = stats['by_category'].get(action, 0) + 1
+                            stats['total_processed'] += 1
+                            
+                            # Log decision
+                            self.log_email_processing(
+                                email_data['id'],
+                                email_data.get('subject', 'No Subject'),
+                                action,
+                                reason,
+                                decision.get('confidence')
+                            )
+                            
+                            # Execute action
+                            self.execute_action(
+                                email_data['id'],
+                                action,
+                                reason,
+                                None  # Skip detailed action logging to speed up
+                            )
+                            
+                        except Exception as e:
+                            stats['errors'] += 1
+                            if log_callback and processed_count % 50 == 0:  # Only log errors occasionally
+                                log_callback(f"    ❌ Error processing email: {str(e)[:100]}")
+                            continue
+                    
+                    # Sub-batch complete
+                    if log_callback:
+                        percentage = (processed_count / total_messages * 100) if total_messages > 0 else 100
+                        log_callback(f"✅ Batch {stats['batch_count']}: {processed_count} total processed ({percentage:.1f}%)")
+                
+                # Update final stats for this chunk
+                stats['total_found'] = processed_count
+                
+                # Check for next page
+                next_page_token = results.get('nextPageToken')
+                if not next_page_token:
+                    if log_callback:
+                        log_callback("🎯 All emails fetched and processed!")
+                    break
+                
+                # Very brief pause to avoid rate limits
+                import time
+                time.sleep(0.5)
+            
+            # Final statistics
+            elapsed = datetime.now() - stats['start_time']
+            stats['duration'] = elapsed.total_seconds()
+            
+            if log_callback:
+                log_callback(f"\n🎉 Bulk processing complete!")
+                log_callback(f"📊 Processing Summary:")
+                log_callback(f"   Total found: {stats['total_found']}")
+                log_callback(f"   Successfully processed: {stats['total_processed']}")
+                log_callback(f"   Errors: {stats['errors']}")
+                log_callback(f"   Duration: {elapsed}")
+                log_callback(f"   Rate: {stats['total_processed']/stats['duration']:.1f} emails/second")
+                
+                log_callback(f"\n📈 Category Breakdown:")
+                for category, count in stats['by_category'].items():
+                    percentage = (count / stats['total_processed']) * 100 if stats['total_processed'] > 0 else 0
+                    log_callback(f"   {category}: {count} ({percentage:.1f}%)")
+            
+            return stats
+            
+        except Exception as e:
+            stats['errors'] += 1
+            if log_callback:
+                log_callback(f'❌ Bulk processing error: {e}')
+            self.logger.exception("Bulk processing error")
+            return stats
+        finally:
+            # After processing, suggest rule updates based on the session
+            self.learning_engine.suggest_rule_updates()
+            self.learning_engine.detect_new_patterns()
     
     def export_subjects(self, max_emails=1000, days_back=30, output_file='email_subjects.txt'):
         """Export email subjects for analysis."""
@@ -891,14 +1750,7 @@ Preview: {email_data['body_preview']}"""
                 subjects_content = f.read()
             
             # Create the analysis prompt
-            gemini_prompts = self.llm_prompts.get("gemini", {})
-            analysis_prompt_template = gemini_prompts.get("analysis_prompt", "")
-
-            if not analysis_prompt_template:
-                print("❌ Gemini analysis prompt not found in settings.")
-                return None
-
-            prompt = analysis_prompt_template.format(subjects_content=subjects_content)
+            prompt = GEMINI_ANALYSIS_PROMPT.format(subjects_content=subjects_content)
             
             # Initialize Gemini model
             model = genai.GenerativeModel('gemini-1.5-flash')
@@ -1047,11 +1899,103 @@ Preview: {email_data['body_preview']}"""
         else:
             print("\n⚠️ Analysis failed, but subjects have been exported to email_subjects.txt")
             print("You can manually upload this file to Gemini for analysis.")
+            
+    def analyze_unsubscribe_candidates(self, log_callback=None):
+        """
+        Identify emails that user never reads.
+        
+        Criteria:
+        - Never opened (using Gmail API read status)
+        - High frequency + low engagement
+        """
+        if log_callback:
+            log_callback("🕵️ Analyzing for unsubscribe candidates...")
+
+        candidates = {}
+        try:
+            # Query for unread promotional-looking emails
+            query = "is:unread category:promotions"
+            results = self.service.users().messages().list(userId='me', q=query, maxResults=500).execute()
+            messages = results.get('messages', [])
+
+            if log_callback:
+                log_callback(f"Found {len(messages)} unread promotional emails to analyze.")
+
+            for msg in messages:
+                email_data = self.get_email_content(msg['id'])
+                if email_data:
+                    sender = email_data['sender']
+                    if sender in candidates:
+                        candidates[sender]['count'] += 1
+                    else:
+                        candidates[sender] = {'count': 1, 'example_subject': email_data['subject']}
+            
+            # Filter for high-frequency senders
+            unsubscribe_list = []
+            for sender, data in candidates.items():
+                if data['count'] > 5: # Arbitrary threshold for "high frequency"
+                    unsubscribe_list.append(f"Sender: {sender} (unread count: {data['count']})")
+            
+            if log_callback:
+                log_callback(f"Found {len(unsubscribe_list)} potential unsubscribe candidates.")
+            
+            return unsubscribe_list
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"Error analyzing unsubscribe candidates: {e}")
+            return []
+            
+    def auto_evolve_system(self, log_callback=None):
+        """
+        Run the auto-evolution process to improve filtering rules over time.
+        """
+        if log_callback:
+            log_callback("🤖 Starting auto-evolution process...")
+
+        # 1. Analyze categorization history for patterns and suggest updates
+        suggested_updates = self.learning_engine.suggest_rule_updates()
+        if suggested_updates:
+            if log_callback:
+                log_callback(f"   🔍 Found {len(suggested_updates)} potential rule updates.")
+            # In a real implementation, you'd present these to the user for confirmation
+            # For now, we'll just log them.
+            self.logger.info(f"Suggested rule updates: {json.dumps(suggested_updates, indent=2)}")
+
+        # 2. Detect new, uncategorized patterns
+        new_patterns = self.learning_engine.detect_new_patterns()
+        if new_patterns:
+            if log_callback:
+                log_callback(f"   ✨ Detected {len(new_patterns)} new email patterns.")
+            self.logger.info(f"Detected new patterns: {new_patterns}")
+
+        # 3. Monitor filter effectiveness (placeholder)
+        if log_callback:
+            log_callback("   📊 Monitoring filter effectiveness (placeholder)...")
+
+        # 4. Suggest filter adjustments (placeholder)
+        if log_callback:
+            log_callback("   🔧 Suggesting filter adjustments (placeholder)...")
+
+        if log_callback:
+            log_callback("✅ Auto-evolution process complete.")
  
 class GmailCleanerGUI:
     def __init__(self):
         self.cleaner = None
         self.setup_ui()
+        
+        # Auto-connect to Gmail on startup
+        self.root.after(1000, self.auto_connect_gmail)  # Connect after UI loads
+    
+    def auto_connect_gmail(self):
+        """Automatically connect to Gmail on startup."""
+        try:
+            self.log("🚀 Auto-connecting to Gmail...")
+            self.connect_gmail()
+        except Exception as e:
+            self.log(f"⚠️ Auto-connect failed: {e}")
+            self.log("   You can manually connect using the 'Connect to Gmail' button")
         
     def setup_ui(self):
         """Create the GUI interface."""
@@ -1067,6 +2011,10 @@ class GmailCleanerGUI:
         main_frame = ttk.Frame(notebook)
         notebook.add(main_frame, text="Main")
         
+        # Backlog Cleanup tab
+        backlog_frame = ttk.Frame(notebook)
+        notebook.add(backlog_frame, text="Backlog Cleanup")
+        
         # Settings tab
         settings_frame = ttk.Frame(notebook)
         notebook.add(settings_frame, text="Settings")
@@ -1075,9 +2023,20 @@ class GmailCleanerGUI:
         management_frame = ttk.Frame(notebook)
         notebook.add(management_frame, text="Rule & Label Management")
         
+        # Analytics tab
+        analytics_frame = ttk.Frame(notebook)
+        notebook.add(analytics_frame, text="Analytics")
+        
+        # Unsubscribe tab
+        unsubscribe_frame = ttk.Frame(notebook)
+        notebook.add(unsubscribe_frame, text="Unsubscribe")
+        
         self.setup_main_tab(main_frame)
+        self.setup_backlog_tab(backlog_frame)
         self.setup_settings_tab(settings_frame)
         self.setup_management_tab(management_frame)
+        self.setup_analytics_tab(analytics_frame)
+        self.setup_unsubscribe_tab(unsubscribe_frame)
         
     def setup_main_tab(self, parent):
         """Setup the main control tab."""
@@ -1102,7 +2061,7 @@ class GmailCleanerGUI:
         options_frame = ttk.LabelFrame(parent, text="Options", padding=10)
         options_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        self.dry_run_var = tk.BooleanVar(value=True)
+        self.dry_run_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(options_frame, text="Dry Run (don't actually modify emails)",
                        variable=self.dry_run_var).pack(anchor=tk.W)
         
@@ -1112,6 +2071,127 @@ class GmailCleanerGUI:
         
         self.log_text = scrolledtext.ScrolledText(log_frame, height=15)
         self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+    def setup_backlog_tab(self, parent):
+        """Setup the backlog cleanup tab."""
+        # Status frame
+        status_frame = ttk.LabelFrame(parent, text="Backlog Status", padding=10)
+        status_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.backlog_status_label = ttk.Label(status_frame, text="Ready to process unread emails")
+        self.backlog_status_label.pack(anchor=tk.W)
+        
+        # Configuration frame
+        config_frame = ttk.LabelFrame(parent, text="Processing Options", padding=10)
+        config_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Batch size
+        batch_frame = ttk.Frame(config_frame)
+        batch_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(batch_frame, text="Batch size:").pack(side=tk.LEFT)
+        self.batch_size_var = tk.StringVar(value="50")
+        batch_spinbox = ttk.Spinbox(batch_frame, from_=10, to=500, width=10, textvariable=self.batch_size_var)
+        batch_spinbox.pack(side=tk.LEFT, padx=5)
+        ttk.Label(batch_frame, text="emails per batch").pack(side=tk.LEFT, padx=5)
+        
+        # Age filter
+        age_frame = ttk.Frame(config_frame)
+        age_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(age_frame, text="Process emails older than:").pack(side=tk.LEFT)
+        self.older_than_var = tk.StringVar(value="0")
+        age_spinbox = ttk.Spinbox(age_frame, from_=0, to=365, width=10, textvariable=self.older_than_var)
+        age_spinbox.pack(side=tk.LEFT, padx=5)
+        ttk.Label(age_frame, text="days (0 = all unread)").pack(side=tk.LEFT, padx=5)
+        
+        # Processing mode
+        mode_frame = ttk.Frame(config_frame)
+        mode_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(mode_frame, text="Processing mode:").pack(side=tk.LEFT)
+        self.processing_mode_var = tk.StringVar(value="hybrid")
+        mode_combo = ttk.Combobox(mode_frame, textvariable=self.processing_mode_var, 
+                                 values=["filters_only", "hybrid", "ai_only"], width=15, state="readonly")
+        mode_combo.pack(side=tk.LEFT, padx=5)
+        
+        # Mode descriptions
+        mode_desc_frame = ttk.Frame(config_frame)
+        mode_desc_frame.pack(fill=tk.X, pady=2)
+        mode_descriptions = {
+            "filters_only": "Apply existing Gmail filters only (fastest)",
+            "hybrid": "Apply filters first, then AI for remaining emails (recommended)", 
+            "ai_only": "Use AI for all emails (most thorough)"
+        }
+        self.mode_desc_label = ttk.Label(mode_desc_frame, text=mode_descriptions["hybrid"], foreground="blue")
+        self.mode_desc_label.pack(anchor=tk.W, padx=20)
+        
+        def update_mode_description(*args):
+            mode = self.processing_mode_var.get()
+            self.mode_desc_label.config(text=mode_descriptions.get(mode, ""))
+        
+        self.processing_mode_var.trace('w', update_mode_description)
+        
+        # Dry run option
+        self.backlog_dry_run_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(config_frame, text="Dry Run (preview actions without executing)", 
+                       variable=self.backlog_dry_run_var).pack(anchor=tk.W, pady=2)
+        
+        # Control buttons
+        control_frame = ttk.LabelFrame(parent, text="Controls", padding=10)
+        control_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        button_frame = ttk.Frame(control_frame)
+        button_frame.pack(fill=tk.X)
+        
+        self.start_backlog_button = ttk.Button(button_frame, text="Start Cleanup", command=self.start_backlog_cleanup)
+        self.start_backlog_button.pack(side=tk.LEFT, padx=5)
+        
+        self.pause_backlog_button = ttk.Button(button_frame, text="Pause", command=self.pause_backlog_cleanup, state=tk.DISABLED)
+        self.pause_backlog_button.pack(side=tk.LEFT, padx=5)
+        
+        self.resume_backlog_button = ttk.Button(button_frame, text="Resume", command=self.resume_backlog_cleanup, state=tk.DISABLED)
+        self.resume_backlog_button.pack(side=tk.LEFT, padx=5)
+        
+        self.cancel_backlog_button = ttk.Button(button_frame, text="Cancel", command=self.cancel_backlog_cleanup, state=tk.DISABLED)
+        self.cancel_backlog_button.pack(side=tk.LEFT, padx=5)
+        
+        # Progress frame
+        progress_frame = ttk.LabelFrame(parent, text="Progress", padding=10)
+        progress_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Progress bar
+        self.backlog_progress_var = tk.DoubleVar()
+        self.backlog_progress_bar = ttk.Progressbar(progress_frame, variable=self.backlog_progress_var, maximum=100)
+        self.backlog_progress_bar.pack(fill=tk.X, pady=2)
+        
+        # Progress labels
+        self.backlog_progress_label = ttk.Label(progress_frame, text="0 / 0 emails processed (0%)")
+        self.backlog_progress_label.pack(anchor=tk.W, pady=2)
+        
+        self.backlog_rate_label = ttk.Label(progress_frame, text="Processing rate: 0 emails/sec")
+        self.backlog_rate_label.pack(anchor=tk.W, pady=2)
+        
+        # Statistics frame
+        stats_frame = ttk.LabelFrame(parent, text="Statistics", padding=10)
+        stats_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Create a frame with columns for category stats
+        self.stats_text = tk.Text(stats_frame, height=8, wrap=tk.WORD)
+        stats_scrollbar = ttk.Scrollbar(stats_frame, orient=tk.VERTICAL, command=self.stats_text.yview)
+        self.stats_text.configure(yscrollcommand=stats_scrollbar.set)
+        
+        self.stats_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        stats_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Log frame for backlog processing
+        backlog_log_frame = ttk.LabelFrame(parent, text="Processing Log", padding=10)
+        backlog_log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.backlog_log_text = scrolledtext.ScrolledText(backlog_log_frame, height=10)
+        self.backlog_log_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Initialize processing state
+        self.processing_paused = False
+        self.processing_cancelled = False
+        self.current_stats = None
         
     def setup_settings_tab(self, parent):
         """Setup the settings configuration tab."""
@@ -1279,14 +2359,29 @@ class GmailCleanerGUI:
                 self.refresh_labels()
                 
         except Exception as e:
-            self.status_label.config(text="✗ Connection failed")
-            self.log(f"✗ Gmail connection failed: {e}")
+            self.status_label.config(text="❌ Connection failed")
+            self.log(f"❌ Gmail connection failed: {e}")
             messagebox.showerror("Error", f"Failed to connect to Gmail: {e}")
+
+    def ensure_cleaner_connection(self):
+        """Ensure cleaner has active Gmail connection."""
+        if not hasattr(self, 'cleaner') or self.cleaner is None:
+            self.log("🔄 No Gmail connection, establishing...")
+            self.connect_gmail()
+            return hasattr(self, 'cleaner') and self.cleaner is not None
+        
+        # Test existing connection
+        if not self.cleaner.ensure_gmail_connection():
+            self.log("🔄 Gmail connection lost, reconnecting...")
+            self.connect_gmail()
+            return hasattr(self, 'cleaner') and self.cleaner is not None
+        
+        return True
     
     def process_emails(self):
         """Process emails in a separate thread."""
-        if not self.cleaner:
-            messagebox.showwarning("Warning", "Please connect to Gmail first")
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
             return
         
         self.cleaner.settings['dry_run'] = self.dry_run_var.get()
@@ -1306,8 +2401,8 @@ class GmailCleanerGUI:
     
     def export_subjects(self):
         """Export email subjects for analysis."""
-        if not self.cleaner:
-            messagebox.showwarning("Warning", "Please connect to Gmail first")
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
             return
         
         # Clear log
@@ -1330,8 +2425,8 @@ class GmailCleanerGUI:
     
     def auto_analyze(self):
         """Auto-analyze emails with Gemini and update settings."""
-        if not self.cleaner:
-            messagebox.showwarning("Warning", "Please connect to Gmail first")
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
             return
         
         if not GEMINI_API_KEY:
@@ -1375,8 +2470,8 @@ class GmailCleanerGUI:
     
     def setup_filters(self):
         """Setup Gmail filters based on current settings."""
-        if not self.cleaner:
-            messagebox.showwarning("Warning", "Please connect to Gmail first")
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
             return
         
         # Clear log
@@ -1392,6 +2487,193 @@ class GmailCleanerGUI:
             self.cleaner.setup_gmail_filters(log_callback=self.log)
         except Exception as e:
             self.log(f"Error setting up filters: {e}")
+    
+    def start_backlog_cleanup(self):
+        """Start the backlog cleanup process."""
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
+            return
+        
+        # Update cleaner settings
+        self.cleaner.settings['dry_run'] = self.backlog_dry_run_var.get()
+        
+        # Reset state
+        self.processing_paused = False
+        self.processing_cancelled = False
+        
+        # Update UI state
+        self.start_backlog_button.config(state=tk.DISABLED)
+        self.pause_backlog_button.config(state=tk.NORMAL)
+        self.cancel_backlog_button.config(state=tk.NORMAL)
+        self.resume_backlog_button.config(state=tk.DISABLED)
+        
+        # Clear logs and reset progress
+        self.backlog_log_text.delete(1.0, tk.END)
+        self.stats_text.delete(1.0, tk.END)
+        self.backlog_progress_var.set(0)
+        self.backlog_progress_label.config(text="Starting cleanup...")
+        self.backlog_status_label.config(text="Processing emails...")
+        
+        # Start processing in thread
+        threading.Thread(target=self._backlog_cleanup_thread, daemon=True).start()
+    
+    def pause_backlog_cleanup(self):
+        """Pause the backlog cleanup process."""
+        self.processing_paused = True
+        self.pause_backlog_button.config(state=tk.DISABLED)
+        self.resume_backlog_button.config(state=tk.NORMAL)
+        self.backlog_status_label.config(text="Paused...")
+    
+    def resume_backlog_cleanup(self):
+        """Resume the backlog cleanup process."""
+        self.processing_paused = False
+        self.pause_backlog_button.config(state=tk.NORMAL)
+        self.resume_backlog_button.config(state=tk.DISABLED)
+        self.backlog_status_label.config(text="Processing emails...")
+    
+    def cancel_backlog_cleanup(self):
+        """Cancel the backlog cleanup process."""
+        self.processing_cancelled = True
+        self.processing_paused = False
+        
+        # Reset UI state
+        self.start_backlog_button.config(state=tk.NORMAL)
+        self.pause_backlog_button.config(state=tk.DISABLED)
+        self.resume_backlog_button.config(state=tk.DISABLED)
+        self.cancel_backlog_button.config(state=tk.DISABLED)
+        self.backlog_status_label.config(text="Cancelled")
+    
+    def _backlog_cleanup_thread(self):
+        """Thread function for backlog cleanup processing."""
+        self.log(f"Backlog cleanup thread started. Paused: {self.processing_paused}, Cancelled: {self.processing_cancelled}")
+        try:
+            # Get parameters
+            batch_size = int(self.batch_size_var.get())
+            older_than_days = int(self.older_than_var.get())
+            self.log(f"Batch size: {batch_size}, Older than: {older_than_days} days")
+            
+            # Define callbacks
+            def log_callback(message):
+                self.root.after(0, lambda: self._update_backlog_log(message))
+            
+            def progress_callback(current, total):
+                self.root.after(0, lambda: self._update_backlog_progress(current, total))
+            
+            def pause_callback():
+                return self.processing_paused or self.processing_cancelled
+            
+            # Get processing mode
+            processing_mode = self.processing_mode_var.get()
+            self.log(f"Processing mode: {processing_mode}")
+            
+            total_stats = {
+                'filter_processed': 0,
+                'ai_processed': 0,
+                'total_processed': 0,
+                'errors': 0
+            }
+            
+            # Apply existing filters first (if not ai_only mode)
+            if processing_mode in ["filters_only", "hybrid"]:
+                self.log("Phase 1: Applying existing Gmail filters...")
+                filter_processed = self.cleaner.apply_existing_filters_to_backlog(
+                    log_callback=log_callback
+                )
+                total_stats['filter_processed'] = filter_processed
+                total_stats['total_processed'] += filter_processed
+                
+                if processing_mode == "filters_only":
+                    self.log(f"Filter-only mode complete. Processed {filter_processed} emails.")
+                    self.root.after(0, lambda: self._update_final_stats(total_stats))
+                    return
+            
+            # AI processing for remaining emails (if not filters_only mode)
+            if processing_mode in ["hybrid", "ai_only"]:
+                phase_name = "Phase 2: AI processing remaining emails" if processing_mode == "hybrid" else "AI processing all emails"
+                self.log(f"{phase_name}...")
+                
+                stats = self.cleaner.process_email_backlog(
+                    batch_size=batch_size,
+                    older_than_days=older_than_days,
+                    log_callback=log_callback,
+                    progress_callback=progress_callback,
+                    pause_callback=pause_callback
+                )
+                
+                total_stats['ai_processed'] = stats.get('total_processed', 0)
+                total_stats['total_processed'] += stats.get('total_processed', 0)
+                total_stats['errors'] += stats.get('errors', 0)
+                total_stats.update(stats)  # Include category breakdown
+            self.log(f"All processing complete. Total stats: {total_stats}")
+            
+            # Update final stats
+            self.root.after(0, lambda: self._update_final_stats(total_stats))
+            
+        except Exception as e:
+            error_msg = f"Backlog cleanup error: {e}"
+            self.log(error_msg)
+            self.root.after(0, lambda: self._update_backlog_log(error_msg))
+        finally:
+            # Reset UI state
+            self.log("Backlog cleanup thread finished.")
+            self.root.after(0, self._cleanup_finished)
+    
+    def _update_backlog_log(self, message):
+        """Update the backlog log in the GUI thread."""
+        self.backlog_log_text.insert(tk.END, message + "\n")
+        self.backlog_log_text.see(tk.END)
+        self.root.update()
+    
+    def _update_backlog_progress(self, current, total):
+        """Update the progress bar and labels."""
+        if total > 0:
+            percentage = (current / total) * 100
+            self.backlog_progress_var.set(percentage)
+            self.backlog_progress_label.config(text=f"{current} / {total} emails processed ({percentage:.1f}%)")
+            
+            # Calculate rate if we have stats
+            if hasattr(self, 'current_stats') and self.current_stats:
+                elapsed = (datetime.now() - self.current_stats['start_time']).total_seconds()
+                if elapsed > 0:
+                    rate = current / elapsed
+                    self.backlog_rate_label.config(text=f"Processing rate: {rate:.1f} emails/sec")
+    
+    def _update_final_stats(self, stats):
+        """Update the final statistics display."""
+        self.current_stats = stats
+        
+        # Clear and update stats text
+        self.stats_text.delete(1.0, tk.END)
+        
+        stats_text = f"📊 Processing Summary:\n"
+        stats_text += f"Total found: {stats['total_found']}\n"
+        stats_text += f"Successfully processed: {stats['total_processed']}\n"
+        stats_text += f"Errors: {stats['errors']}\n"
+        
+        if 'duration' in stats:
+            stats_text += f"Duration: {stats['duration']:.1f} seconds\n"
+            if stats['duration'] > 0:
+                rate = stats['total_processed'] / stats['duration']
+                stats_text += f"Rate: {rate:.1f} emails/second\n"
+        
+        stats_text += f"\n📈 Category Breakdown:\n"
+        for category, count in stats['by_category'].items():
+            percentage = (count / stats['total_processed']) * 100 if stats['total_processed'] > 0 else 0
+            stats_text += f"{category}: {count} ({percentage:.1f}%)\n"
+        
+        self.stats_text.insert(tk.END, stats_text)
+    
+    def _cleanup_finished(self):
+        """Reset UI state when cleanup is finished."""
+        self.start_backlog_button.config(state=tk.NORMAL)
+        self.pause_backlog_button.config(state=tk.DISABLED)
+        self.resume_backlog_button.config(state=tk.DISABLED)
+        self.cancel_backlog_button.config(state=tk.DISABLED)
+        
+        if self.processing_cancelled:
+            self.backlog_status_label.config(text="Cancelled")
+        else:
+            self.backlog_status_label.config(text="Cleanup complete")
     
     def show_confirmation_dialog(self, proposed_rules):
         """Show confirmation dialog with proposed changes from Gemini."""
@@ -1626,8 +2908,8 @@ class GmailCleanerGUI:
     
     def save_all_mappings(self):
         """Save all label mappings to settings file."""
-        if not self.cleaner:
-            messagebox.showwarning("Warning", "Please connect to Gmail first")
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
             return
         
         try:
@@ -1793,11 +3075,119 @@ class GmailCleanerGUI:
         """Start the GUI."""
         self.load_settings()
         self.root.mainloop()
+        
+    def setup_analytics_tab(self, parent):
+        """Setup the analytics dashboard tab."""
+        # Create scrollable frame
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Category Distribution
+        dist_frame = ttk.LabelFrame(scrollable_frame, text="Category Distribution", padding=10)
+        dist_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Placeholder for pie chart
+        self.dist_canvas = tk.Canvas(dist_frame, width=300, height=200, bg='white')
+        self.dist_canvas.pack()
+        self.dist_canvas.create_text(150, 100, text="Category Distribution Pie Chart (placeholder)")
+
+        # Filter Effectiveness
+        effectiveness_frame = ttk.LabelFrame(scrollable_frame, text="Filter Effectiveness", padding=10)
+        effectiveness_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(effectiveness_frame, text="Effectiveness scores (placeholder):").pack(anchor=tk.W)
+        self.effectiveness_text = scrolledtext.ScrolledText(effectiveness_frame, height=5)
+        self.effectiveness_text.pack(fill=tk.X, pady=5)
+        self.effectiveness_text.insert(1.0, "SHOPPING Filter: 95%\nBILLS Filter: 98%\n")
+
+        # Suggested Optimizations
+        optimizations_frame = ttk.LabelFrame(scrollable_frame, text="Suggested Optimizations", padding=10)
+        optimizations_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(optimizations_frame, text="Suggested optimizations (placeholder):").pack(anchor=tk.W)
+        self.optimizations_text = scrolledtext.ScrolledText(optimizations_frame, height=5)
+        self.optimizations_text.pack(fill=tk.X, pady=5)
+        self.optimizations_text.insert(1.0, "Suggestion: Create a new label for 'Project X' based on recent emails.\n")
+        
+        # Auto-Evolve Button
+        evolve_frame = ttk.LabelFrame(scrollable_frame, text="Auto-Evolution", padding=10)
+        evolve_frame.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Button(evolve_frame, text="Run Auto-Evolution", command=self.run_auto_evolution).pack(pady=5)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+    def setup_unsubscribe_tab(self, parent):
+        """Setup the unsubscribe assistant tab."""
+        # Control frame
+        control_frame = ttk.LabelFrame(parent, text="Actions", padding=10)
+        control_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Button(control_frame, text="Find Unsubscribe Candidates", command=self.find_unsubscribe_candidates).pack(side=tk.LEFT, padx=5)
+        
+        # Candidates frame
+        candidates_frame = ttk.LabelFrame(parent, text="Unsubscribe Candidates", padding=10)
+        candidates_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.unsubscribe_text = scrolledtext.ScrolledText(candidates_frame, height=15)
+        self.unsubscribe_text.pack(fill=tk.BOTH, expand=True)
+
+    def find_unsubscribe_candidates(self):
+        """Find and display unsubscribe candidates."""
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
+            return
+            
+        self.unsubscribe_text.delete(1.0, tk.END)
+        self.log("Finding unsubscribe candidates...")
+        
+        def log_callback(message):
+            self.root.after(0, lambda: self.log(message))
+
+        def find_candidates_thread():
+            candidates = self.cleaner.analyze_unsubscribe_candidates(log_callback=log_callback)
+            self.root.after(0, lambda: self.display_unsubscribe_candidates(candidates))
+
+        threading.Thread(target=find_candidates_thread, daemon=True).start()
+
+    def display_unsubscribe_candidates(self, candidates):
+        """Display unsubscribe candidates in the text area."""
+        self.unsubscribe_text.delete(1.0, tk.END)
+        if candidates:
+            self.unsubscribe_text.insert(tk.END, "\n".join(candidates))
+        else:
+            self.unsubscribe_text.insert(tk.END, "No unsubscribe candidates found.")
+        self.log("Unsubscribe analysis complete.")
+
+    def run_auto_evolution(self):
+        """Run the auto-evolution process."""
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
+            return
+            
+        self.log("Running auto-evolution process...")
+        
+        def log_callback(message):
+            self.root.after(0, lambda: self.log(message))
+
+        def auto_evolve_thread():
+            self.cleaner.auto_evolve_system(log_callback=log_callback)
+
+        threading.Thread(target=auto_evolve_thread, daemon=True).start()
  
 def main():
     """Main function to run the GUI."""
     app = GmailCleanerGUI()
     app.run()
- 
+
 if __name__ == '__main__':
     main()
