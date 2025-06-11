@@ -41,76 +41,38 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-GEMINI_ANALYSIS_PROMPT = """Analyze these email subjects and create a comprehensive email management strategy.
+GEMINI_ANALYSIS_PROMPT = """Analyze these email subjects and suggest email organization improvements.
 
+EMAIL SUBJECTS:
 {subjects_content}
 
-ADVANCED ANALYSIS TASKS:
-1. Identify email patterns and clusters
-2. Suggest new categories based on actual email content
-3. Recommend sender-based rules with confidence scores
-4. Identify time-based patterns (newsletters on Tuesdays, bills on 1st, etc.)
-5. Suggest label hierarchy (parent/child labels)
-6. Recommend automation rules for recurring patterns
-7. Identify potentially important emails that might be miscategorized
-8. Suggest filter improvements for existing rules
+Analyze the patterns and provide suggestions in this EXACT JSON format:
 
-OUTPUT FORMAT:
-{
-  "categories": {
-    "new_categories": [
-      {
-        "name": "CATEGORY_NAME",
-        "description": "What this category is for",
-        "parent_label": "PARENT_CATEGORY or null",
-        "color": {"background": "#hex", "text": "#hex"},
-        "auto_archive": true/false,
-        "retention_days": 30
-      }
-    ],
-    "category_rules": {
-      "CATEGORY": {
-        "keywords": ["keyword1", "keyword2"],
-        "senders": ["pattern1", "pattern2"],
-        "subject_patterns": ["regex1", "regex2"],
-        "confidence_threshold": 0.8,
-        "time_patterns": {
-          "day_of_week": [1,2,3,4,5],
-          "time_of_day": "morning|afternoon|evening|night"
-        }
-      }
-    }
-  },
-  "gmail_filters": [
-    {
-      "name": "Filter Name",
-      "criteria": {
-        "from": "sender pattern",
-        "subject": "subject pattern",
-        "has_attachment": true/false
-      },
-      "actions": {
-        "label": "CATEGORY",
-        "archive": true/false,
-        "mark_important": true/false,
-        "forward_to": "email@example.com"
-      },
-      "confidence": 0.95
-    }
-  ],
-  "cleanup_suggestions": {
-    "merge_labels": [["OLD_LABEL", "INTO_LABEL"]],
-    "delete_labels": ["UNUSED_LABEL"],
-    "rename_labels": {"OLD_NAME": "NEW_NAME"}
-  },
-  "insights": {
-    "email_volume_by_category": {},
-    "peak_email_times": {},
-    "top_senders": [],
-    "unsubscribe_candidates": []
-  }
-}
-"""
+{{
+  "categories": {{
+    "SHOPPING": {{
+      "keywords": ["order", "shipping", "purchase", "cart"],
+      "senders": ["@amazon.com", "@ebay.com", "noreply@"],
+      "description": "Order confirmations and shopping"
+    }},
+    "NEWSLETTERS": {{
+      "keywords": ["newsletter", "digest", "weekly", "unsubscribe"],
+      "senders": ["newsletter@", "news@"],
+      "description": "Newsletters and updates"
+    }},
+    "BILLS": {{
+      "keywords": ["invoice", "payment", "bill", "statement"],
+      "senders": ["billing@", "accounts@"],
+      "description": "Bills and financial documents"
+    }}
+  }},
+  "insights": {{
+    "top_senders": ["sender1@example.com", "sender2@example.com"],
+    "common_keywords": ["keyword1", "keyword2"]
+  }}
+}}
+
+Respond with ONLY valid JSON, no other text or explanation."""
 
 # Settings configuration
 DEFAULT_SETTINGS = {
@@ -1811,6 +1773,8 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 
         except Exception as e:
             print(f"❌ Gemini analysis error: {e}")
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Gemini analysis failed: {str(e)}")
             return None
     
     def apply_gemini_rules(self, rules, log_callback=None):
