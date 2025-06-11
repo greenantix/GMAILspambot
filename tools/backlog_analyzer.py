@@ -35,12 +35,18 @@ from collections import Counter
 import pandas as pd
 import json
 from datetime import datetime
+import sys
+import os
+
+# Add parent directory to path to import log_config
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from log_config import get_logger
 
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
-# Initialize logger
-logger = logging.getLogger(__name__)
+# Initialize logger using standardized config
+logger = get_logger(__name__)
 
 
 def _fetch_emails_in_batches(
@@ -271,8 +277,10 @@ if __name__ == '__main__':
     - Exports the report to both JSON and CSV.
     """
     from gmail_api_utils import get_gmail_service
+    from log_config import init_logging
 
-    logging.basicConfig(level=logging.INFO)
+    # Initialize standardized logging
+    init_logging(log_level=logging.INFO)
 
     creds_path = '../config/credentials.json'
     token_path = '../config/token.json'

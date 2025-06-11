@@ -27,6 +27,9 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import BatchHttpRequest
+import time
+import random
 
 from log_config import get_logger
 
@@ -37,6 +40,48 @@ SCOPES = [
     'https://www.googleapis.com/auth/gmail.modify',
     'https://www.googleapis.com/auth/gmail.settings.basic'
 ]
+
+# =========================
+# Utility Functions
+# =========================
+
+def exponential_backoff_retry(func, max_retries: int = 3, base_delay: float = 1.0):
+    """
+    Execute a function with exponential backoff retry logic.
+    
+    Args:
+        func: Function to execute
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds for exponential backoff
+    
+    Returns:
+        Result of the function call
+    
+    Raises:
+        The last exception if all retries are exhausted
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return func()
+        except HttpError as e:
+            # Check if this is a retryable error
+            if e.resp.status in [429, 500, 502, 503, 504]:
+                if attempt == max_retries:
+                    logger.error(f"Max retries ({max_retries}) exceeded for API call")
+                    raise
+                
+                # Calculate delay with jitter
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(f"API rate limit hit, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries + 1})")
+                time.sleep(delay)
+            else:
+                # Non-retryable error, raise immediately
+                raise
+        except Exception as e:
+            # Non-HTTP errors are generally not retryable
+            logger.error(f"Non-retryable error in API call: {e}")
+            raise
+
 
 # =========================
 # OAuth2 Authentication
@@ -432,14 +477,15 @@ class GmailEmailManager:
     # Batch operations
 
     def batch_modify(self, msg_ids: List[str], add_labels: Optional[List[str]] = None,
-                     remove_labels: Optional[List[str]] = None) -> Dict[str, bool]:
+                     remove_labels: Optional[List[str]] = None, batch_size: int = 100) -> Dict[str, bool]:
         """
-        Batch add/remove labels for multiple emails.
+        Efficiently batch add/remove labels for multiple emails using Gmail API batch requests.
 
         Args:
             msg_ids (list): List of Gmail message IDs.
             add_labels (list, optional): Label IDs to add.
             remove_labels (list, optional): Label IDs to remove.
+            batch_size (int): Number of operations per batch request (max 100).
 
         Returns:
             dict: Mapping of msg_id to success status.
@@ -447,17 +493,78 @@ class GmailEmailManager:
         Usage Example:
             results = email_mgr.batch_modify(msg_ids, add_labels=['IMPORTANT'])
         """
+        if not msg_ids:
+            return {}
+        
         results = {}
-        for msg_id in msg_ids:
-            results[msg_id] = self.modify_labels(msg_id, add_labels, remove_labels)
+        batch_size = min(batch_size, 100)  # Gmail API limit
+        
+        # Process in chunks to respect API limits
+        for i in range(0, len(msg_ids), batch_size):
+            chunk = msg_ids[i:i + batch_size]
+            chunk_results = self._execute_batch_modify_chunk(chunk, add_labels, remove_labels)
+            results.update(chunk_results)
+            
+            # Small delay between chunks to be API-friendly
+            if i + batch_size < len(msg_ids):
+                time.sleep(0.1)
+        
         return results
 
-    def batch_delete(self, msg_ids: List[str]) -> Dict[str, bool]:
+    def _execute_batch_modify_chunk(self, msg_ids: List[str], add_labels: Optional[List[str]], 
+                                   remove_labels: Optional[List[str]]) -> Dict[str, bool]:
+        """Execute a single batch modification chunk."""
+        results = {}
+        
+        def execute_batch():
+            batch = BatchHttpRequest()
+            
+            # Prepare the request body
+            modify_body = {}
+            if add_labels:
+                modify_body['addLabelIds'] = add_labels
+            if remove_labels:
+                modify_body['removeLabelIds'] = remove_labels
+            
+            if not modify_body:
+                # No modifications to make
+                return {msg_id: True for msg_id in msg_ids}
+            
+            # Add each message modification to the batch
+            for msg_id in msg_ids:
+                def callback(request_id, response, exception):
+                    nonlocal results
+                    if exception is not None:
+                        logger.error(f"Error modifying message {request_id}: {exception}")
+                        results[request_id] = False
+                    else:
+                        results[request_id] = True
+                
+                request = self.service.users().messages().modify(
+                    userId='me',
+                    id=msg_id,
+                    body=modify_body
+                )
+                batch.add(request, callback=callback, request_id=msg_id)
+            
+            # Execute the batch
+            batch.execute()
+            return results
+        
+        # Execute with retry logic
+        try:
+            return exponential_backoff_retry(execute_batch)
+        except Exception as e:
+            logger.error(f"Batch modify failed for chunk: {e}")
+            return {msg_id: False for msg_id in msg_ids}
+
+    def batch_delete(self, msg_ids: List[str], batch_size: int = 100) -> Dict[str, bool]:
         """
-        Batch delete emails.
+        Efficiently batch delete emails using Gmail API batch requests.
 
         Args:
             msg_ids (list): List of Gmail message IDs.
+            batch_size (int): Number of operations per batch request (max 100).
 
         Returns:
             dict: Mapping of msg_id to success status.
@@ -465,17 +572,62 @@ class GmailEmailManager:
         Usage Example:
             results = email_mgr.batch_delete(msg_ids)
         """
+        if not msg_ids:
+            return {}
+        
         results = {}
-        for msg_id in msg_ids:
-            results[msg_id] = self.delete_email(msg_id)
+        batch_size = min(batch_size, 100)  # Gmail API limit
+        
+        # Process in chunks to respect API limits
+        for i in range(0, len(msg_ids), batch_size):
+            chunk = msg_ids[i:i + batch_size]
+            chunk_results = self._execute_batch_delete_chunk(chunk)
+            results.update(chunk_results)
+            
+            # Small delay between chunks to be API-friendly
+            if i + batch_size < len(msg_ids):
+                time.sleep(0.1)
+        
         return results
 
-    def batch_move_to_trash(self, msg_ids: List[str]) -> Dict[str, bool]:
+    def _execute_batch_delete_chunk(self, msg_ids: List[str]) -> Dict[str, bool]:
+        """Execute a single batch delete chunk."""
+        results = {}
+        
+        def execute_batch():
+            batch = BatchHttpRequest()
+            
+            # Add each message deletion to the batch
+            for msg_id in msg_ids:
+                def callback(request_id, response, exception):
+                    nonlocal results
+                    if exception is not None:
+                        logger.error(f"Error deleting message {request_id}: {exception}")
+                        results[request_id] = False
+                    else:
+                        results[request_id] = True
+                
+                request = self.service.users().messages().delete(userId='me', id=msg_id)
+                batch.add(request, callback=callback, request_id=msg_id)
+            
+            # Execute the batch
+            batch.execute()
+            return results
+        
+        # Execute with retry logic
+        try:
+            return exponential_backoff_retry(execute_batch)
+        except Exception as e:
+            logger.error(f"Batch delete failed for chunk: {e}")
+            return {msg_id: False for msg_id in msg_ids}
+
+    def batch_move_to_trash(self, msg_ids: List[str], batch_size: int = 100) -> Dict[str, bool]:
         """
-        Batch move emails to trash.
+        Efficiently batch move emails to trash using Gmail API batch requests.
 
         Args:
             msg_ids (list): List of Gmail message IDs.
+            batch_size (int): Number of operations per batch request (max 100).
 
         Returns:
             dict: Mapping of msg_id to success status.
@@ -483,17 +635,16 @@ class GmailEmailManager:
         Usage Example:
             results = email_mgr.batch_move_to_trash(msg_ids)
         """
-        results = {}
-        for msg_id in msg_ids:
-            results[msg_id] = self.move_to_trash(msg_id)
-        return results
+        # Use the batch_modify method with TRASH label operations
+        return self.batch_modify(msg_ids, add_labels=['TRASH'], remove_labels=['INBOX'], batch_size=batch_size)
 
-    def batch_restore_from_trash(self, msg_ids: List[str]) -> Dict[str, bool]:
+    def batch_restore_from_trash(self, msg_ids: List[str], batch_size: int = 100) -> Dict[str, bool]:
         """
-        Batch restore emails from trash.
+        Efficiently batch restore emails from trash using Gmail API batch requests.
 
         Args:
             msg_ids (list): List of Gmail message IDs.
+            batch_size (int): Number of operations per batch request (max 100).
 
         Returns:
             dict: Mapping of msg_id to success status.
@@ -501,10 +652,82 @@ class GmailEmailManager:
         Usage Example:
             results = email_mgr.batch_restore_from_trash(msg_ids)
         """
+        # Use the batch_modify method to remove TRASH label and add INBOX
+        return self.batch_modify(msg_ids, add_labels=['INBOX'], remove_labels=['TRASH'], batch_size=batch_size)
+
+    def batch_get_messages(self, msg_ids: List[str], format: str = 'metadata', 
+                          metadata_headers: Optional[List[str]] = None, 
+                          batch_size: int = 100) -> Dict[str, Any]:
+        """
+        Efficiently batch fetch message data using Gmail API batch requests.
+
+        Args:
+            msg_ids (list): List of Gmail message IDs.
+            format (str): Message format ('minimal', 'metadata', 'full').
+            metadata_headers (list, optional): Specific headers to include when format='metadata'.
+            batch_size (int): Number of operations per batch request (max 100).
+
+        Returns:
+            dict: Mapping of msg_id to message data (or None if error).
+
+        Usage Example:
+            messages = email_mgr.batch_get_messages(msg_ids, format='metadata', 
+                                                   metadata_headers=['From', 'Subject'])
+        """
+        if not msg_ids:
+            return {}
+        
         results = {}
-        for msg_id in msg_ids:
-            results[msg_id] = self.restore_from_trash(msg_id)
+        batch_size = min(batch_size, 100)  # Gmail API limit
+        
+        # Process in chunks to respect API limits
+        for i in range(0, len(msg_ids), batch_size):
+            chunk = msg_ids[i:i + batch_size]
+            chunk_results = self._execute_batch_get_chunk(chunk, format, metadata_headers)
+            results.update(chunk_results)
+            
+            # Small delay between chunks to be API-friendly
+            if i + batch_size < len(msg_ids):
+                time.sleep(0.1)
+        
         return results
+
+    def _execute_batch_get_chunk(self, msg_ids: List[str], format: str, 
+                                metadata_headers: Optional[List[str]]) -> Dict[str, Any]:
+        """Execute a single batch get messages chunk."""
+        results = {}
+        
+        def execute_batch():
+            batch = BatchHttpRequest()
+            
+            # Add each message get to the batch
+            for msg_id in msg_ids:
+                def callback(request_id, response, exception):
+                    nonlocal results
+                    if exception is not None:
+                        logger.error(f"Error fetching message {request_id}: {exception}")
+                        results[request_id] = None
+                    else:
+                        results[request_id] = response
+                
+                # Build the get request
+                get_params = {'userId': 'me', 'id': msg_id, 'format': format}
+                if format == 'metadata' and metadata_headers:
+                    get_params['metadataHeaders'] = metadata_headers
+                
+                request = self.service.users().messages().get(**get_params)
+                batch.add(request, callback=callback, request_id=msg_id)
+            
+            # Execute the batch
+            batch.execute()
+            return results
+        
+        # Execute with retry logic
+        try:
+            return exponential_backoff_retry(execute_batch)
+        except Exception as e:
+            logger.error(f"Batch get messages failed for chunk: {e}")
+            return {msg_id: None for msg_id in msg_ids}
 
 # =========================
 # Utility Functions

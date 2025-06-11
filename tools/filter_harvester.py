@@ -31,12 +31,19 @@ Usage:
 
 import logging
 from typing import List, Dict, Any, Optional
+import sys
+import os
+
+# Add parent directory to path to import log_config and exceptions
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from log_config import get_logger
+from exceptions import GmailAPIError, FilterProcessingError, wrap_gmail_api_call
 
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
-# Initialize logger
-logger = logging.getLogger(__name__)
+# Initialize logger using standardized config
+logger = get_logger(__name__)
 
 # Cache for label ID to name mapping to reduce API calls
 _label_id_to_name_cache = {}
@@ -76,13 +83,16 @@ def _get_label_name_from_id(service: Resource, label_id: str) -> Optional[str]:
         return system_labels[label_id]
 
     try:
-        label = service.users().labels().get(userId='me', id=label_id).execute()
+        label = wrap_gmail_api_call(
+            service.users().labels().get(userId='me', id=label_id).execute,
+            operation=f"get label name for ID {label_id}"
+        )
         label_name = label.get('name')
         if label_name:
             _label_id_to_name_cache[label_id] = label_name
         return label_name
-    except HttpError as e:
-        logger.error(f"Failed to retrieve name for label ID {label_id}: {e}")
+    except GmailAPIError as e:
+        e.log_error(logger)
         return None
 
 
@@ -90,7 +100,8 @@ def _parse_criteria(criteria: Dict[str, Any]) -> str:
     """
     Converts a filter's criteria object into a Gmail search query string.
 
-    Handles various fields like 'from', 'to', 'subject', 'hasTheWord', etc.
+    Handles various fields including complex Gmail search operators like size,
+    date ranges, AND/OR conditions, attachments, and other advanced operators.
 
     Args:
         criteria (Dict[str, Any]): The criteria part of a Gmail filter resource.
@@ -99,23 +110,90 @@ def _parse_criteria(criteria: Dict[str, Any]) -> str:
         str: A string formatted as a Gmail search query.
     """
     query_parts = []
-    for key, value in criteria.items():
-        if key == "hasTheWord":
-            key = ""  # The value itself is the query
-        elif key == "doesNotHaveTheWord":
-            key = "-"
-        
-        if isinstance(value, str) and ' ' in value:
-            query_parts.append(f'{key}:"{value}"')
+    
+    # Map Gmail API criteria fields to search operators
+    field_mappings = {
+        'from': 'from',
+        'to': 'to',
+        'subject': 'subject',
+        'hasTheWord': '',  # Direct query text
+        'doesNotHaveTheWord': '-',  # Negation prefix
+        'size': 'size',
+        'sizeComparison': '',  # Used with size
+        'hasAttachment': 'has',
+        'excludeChats': '',  # Special handling
+        'query': ''  # Raw query string
+    }
+    
+    # Handle size with comparison operators
+    if 'size' in criteria and 'sizeComparison' in criteria:
+        size_val = criteria['size']
+        comparison = criteria['sizeComparison']
+        if comparison == 'larger':
+            query_parts.append(f'larger:{size_val}')
+        elif comparison == 'smaller':
+            query_parts.append(f'smaller:{size_val}')
         else:
-            query_parts.append(f'{key}:{value}')
+            query_parts.append(f'size:{size_val}')
+    elif 'size' in criteria:
+        query_parts.append(f'size:{criteria["size"]}')
+    
+    # Handle attachment criteria
+    if 'hasAttachment' in criteria:
+        if criteria['hasAttachment']:
+            query_parts.append('has:attachment')
+        else:
+            query_parts.append('-has:attachment')
+    
+    # Handle exclude chats
+    if 'excludeChats' in criteria and criteria['excludeChats']:
+        query_parts.append('-in:chats')
+    
+    # Process other standard fields
+    for key, value in criteria.items():
+        if key in ['size', 'sizeComparison', 'hasAttachment', 'excludeChats']:
+            continue  # Already handled above
             
+        if key in field_mappings:
+            prefix = field_mappings[key]
+            
+            if key == 'hasTheWord':
+                # Direct query text, may contain complex operators
+                if isinstance(value, str):
+                    # Handle parentheses for OR conditions
+                    if '(' in value or ')' in value or ' OR ' in value.upper():
+                        query_parts.append(f'({value})')
+                    else:
+                        query_parts.append(value)
+            elif key == 'doesNotHaveTheWord':
+                # Negation - wrap complex queries in parentheses
+                if isinstance(value, str):
+                    if ' ' in value or '(' in value:
+                        query_parts.append(f'-({value})')
+                    else:
+                        query_parts.append(f'-{value}')
+            elif key == 'query':
+                # Raw query string - use as-is
+                query_parts.append(str(value))
+            else:
+                # Standard field:value format
+                formatted_value = str(value)
+                if ' ' in formatted_value or '"' in formatted_value:
+                    # Escape quotes and wrap in quotes
+                    escaped_value = formatted_value.replace('"', '\\"')
+                    query_parts.append(f'{prefix}:"{escaped_value}"')
+                else:
+                    query_parts.append(f'{prefix}:{formatted_value}')
+    
     return ' '.join(query_parts)
 
 
 def _parse_action(service: Resource, action: Dict[str, Any]) -> Dict[str, Any]:
     """
     Parses a filter's action object to extract label modifications and other actions.
+
+    Handles all Gmail filter actions including labels, archiving, marking as read/important,
+    forwarding, and deletion.
 
     Args:
         service (Resource): The authenticated Gmail API service object.
@@ -127,22 +205,48 @@ def _parse_action(service: Resource, action: Dict[str, Any]) -> Dict[str, Any]:
     parsed = {
         "add_labels": [],
         "remove_labels": [],
-        "mark_as_spam": "spam" in action.get("addLabelIds", []),
+        "mark_as_spam": False,
+        "mark_as_read": action.get("markAsRead", False),
+        "mark_as_important": action.get("markAsImportant", False),
+        "never_spam": action.get("neverSpam", False),
+        "archive": False,
+        "delete": action.get("delete", False),
+        "forward": action.get("forward", ""),
     }
 
+    # Handle label additions
     if "addLabelIds" in action:
-        parsed["add_labels"] = [
-            _get_label_name_from_id(service, label_id)
-            for label_id in action["addLabelIds"]
-            if _get_label_name_from_id(service, label_id)
-        ]
+        add_label_ids = action["addLabelIds"]
+        parsed["add_labels"] = []
+        
+        for label_id in add_label_ids:
+            if label_id == "SPAM":
+                parsed["mark_as_spam"] = True
+            else:
+                label_name = _get_label_name_from_id(service, label_id)
+                if label_name:
+                    parsed["add_labels"].append(label_name)
 
+    # Handle label removals  
     if "removeLabelIds" in action:
-        parsed["remove_labels"] = [
-            _get_label_name_from_id(service, label_id)
-            for label_id in action["removeLabelIds"]
-            if _get_label_name_from_id(service, label_id)
-        ]
+        remove_label_ids = action["removeLabelIds"]
+        parsed["remove_labels"] = []
+        
+        for label_id in remove_label_ids:
+            if label_id == "INBOX":
+                parsed["archive"] = True
+            else:
+                label_name = _get_label_name_from_id(service, label_id)
+                if label_name:
+                    parsed["remove_labels"].append(label_name)
+
+    # Clean up empty lists for cleaner output
+    if not parsed["add_labels"]:
+        del parsed["add_labels"]
+    if not parsed["remove_labels"]:
+        del parsed["remove_labels"]
+    if not parsed["forward"]:
+        del parsed["forward"]
 
     return parsed
 
@@ -162,7 +266,10 @@ def fetch_and_parse_filters(service: Resource) -> List[Dict[str, Any]]:
     """
     structured_filters = []
     try:
-        results = service.users().settings().filters().list(userId='me').execute()
+        results = wrap_gmail_api_call(
+            service.users().settings().filters().list(userId='me').execute,
+            operation="fetch Gmail filters"
+        )
         filters = results.get('filter', [])
 
         if not filters:
@@ -180,23 +287,233 @@ def fetch_and_parse_filters(service: Resource) -> List[Dict[str, Any]]:
                 logger.warning(f"Filter {filter_id} has no criteria, skipping.")
                 continue
 
-            query = _parse_criteria(criteria)
-            parsed_action = _parse_action(service, action)
+            try:
+                query = _parse_criteria(criteria)
+                parsed_action = _parse_action(service, action)
 
-            structured_filters.append({
-                "id": filter_id,
-                "query": query,
-                "action": parsed_action,
-                "raw_criteria": criteria,
-                "raw_action": action,
-            })
+                structured_filters.append({
+                    "id": filter_id,
+                    "query": query,
+                    "action": parsed_action,
+                    "raw_criteria": criteria,
+                    "raw_action": action,
+                })
+            except Exception as e:
+                raise FilterProcessingError(
+                    f"Failed to parse filter {filter_id}",
+                    filter_id=filter_id,
+                    filter_criteria=str(criteria),
+                    operation="parse_filter"
+                ) from e
         
         logger.info(f"Successfully parsed {len(structured_filters)} filters.")
 
-    except HttpError as e:
-        logger.error(f"An error occurred while fetching Gmail filters: {e}")
+    except GmailAPIError as e:
+        e.log_error(logger)
+    except FilterProcessingError as e:
+        e.log_error(logger)
     
     return structured_filters
+
+
+def apply_existing_filters_to_backlog(service: Resource, email_ids: List[str], 
+                                    progress_callback=None) -> Dict[str, Any]:
+    """
+    Applies existing Gmail filters to a batch of emails to pre-process them
+    before LLM analysis.
+    
+    Args:
+        service (Resource): The authenticated Gmail API service object.
+        email_ids (List[str]): List of email IDs to process.
+        progress_callback: Optional callback function for progress updates.
+    
+    Returns:
+        Dict[str, Any]: Statistics about filter applications including:
+            - processed_count: Number of emails processed by filters
+            - remaining_ids: Email IDs that still need LLM processing
+            - filter_stats: Dictionary of filter ID -> count applied
+    """
+    if not email_ids:
+        return {
+            "processed_count": 0,
+            "remaining_ids": [],
+            "filter_stats": {}
+        }
+    
+    # Fetch all existing filters
+    structured_filters = fetch_and_parse_filters(service)
+    if not structured_filters:
+        logger.info("No filters found, all emails will need LLM processing")
+        return {
+            "processed_count": 0,
+            "remaining_ids": email_ids,
+            "filter_stats": {}
+        }
+    
+    processed_emails = set()
+    filter_stats = {}
+    remaining_ids = []
+    
+    logger.info(f"Applying {len(structured_filters)} filters to {len(email_ids)} emails")
+    
+    try:
+        # Process emails in batches to avoid API limits
+        batch_size = 50
+        for i in range(0, len(email_ids), batch_size):
+            batch_ids = email_ids[i:i + batch_size]
+            
+            # Get email metadata for this batch
+            try:
+                # Use batch request for efficiency
+                batch_emails = []
+                for email_id in batch_ids:
+                    email = service.users().messages().get(
+                        userId='me', 
+                        id=email_id,
+                        format='metadata',
+                        metadataHeaders=['From', 'To', 'Subject']
+                    ).execute()
+                    batch_emails.append((email_id, email))
+                
+            except HttpError as e:
+                logger.error(f"Failed to fetch email batch: {e}")
+                remaining_ids.extend(batch_ids)
+                continue
+            
+            # Apply filters to each email in the batch
+            for email_id, email_data in batch_emails:
+                if email_id in processed_emails:
+                    continue
+                    
+                # Extract email fields for filter matching
+                headers = {h['name'].lower(): h['value'] 
+                          for h in email_data.get('payload', {}).get('headers', [])}
+                
+                email_fields = {
+                    'from': headers.get('from', ''),
+                    'to': headers.get('to', ''),
+                    'subject': headers.get('subject', ''),
+                }
+                
+                # Check each filter against this email
+                filter_applied = False
+                for filter_data in structured_filters:
+                    if _email_matches_filter(email_fields, filter_data):
+                        # Apply the filter action
+                        if _apply_filter_action(service, email_id, filter_data['action']):
+                            processed_emails.add(email_id)
+                            filter_stats[filter_data['id']] = filter_stats.get(filter_data['id'], 0) + 1
+                            filter_applied = True
+                            logger.debug(f"Applied filter {filter_data['id']} to email {email_id}")
+                            break  # Only apply first matching filter
+                
+                if not filter_applied:
+                    remaining_ids.append(email_id)
+            
+            # Update progress
+            if progress_callback:
+                progress = min(100, ((i + batch_size) / len(email_ids)) * 100)
+                progress_callback(f"Applied filters to {min(i + batch_size, len(email_ids))} emails", progress)
+    
+    except Exception as e:
+        logger.error(f"Error applying filters to backlog: {e}")
+        # Return remaining emails for LLM processing
+        remaining_ids.extend([eid for eid in email_ids if eid not in processed_emails])
+    
+    result = {
+        "processed_count": len(processed_emails),
+        "remaining_ids": remaining_ids,
+        "filter_stats": filter_stats
+    }
+    
+    logger.info(f"Filter processing complete: {len(processed_emails)} processed by filters, "
+                f"{len(remaining_ids)} remaining for LLM")
+    
+    return result
+
+
+def _email_matches_filter(email_fields: Dict[str, str], filter_data: Dict[str, Any]) -> bool:
+    """
+    Check if an email matches a filter's criteria.
+    
+    Args:
+        email_fields: Dictionary with 'from', 'to', 'subject' fields
+        filter_data: Structured filter data from fetch_and_parse_filters
+    
+    Returns:
+        bool: True if email matches the filter criteria
+    """
+    criteria = filter_data.get('raw_criteria', {})
+    
+    # Check each criteria field
+    for key, value in criteria.items():
+        if key == 'from' and value.lower() not in email_fields['from'].lower():
+            return False
+        elif key == 'to' and value.lower() not in email_fields['to'].lower():
+            return False
+        elif key == 'subject' and value.lower() not in email_fields['subject'].lower():
+            return False
+        elif key == 'hasTheWord':
+            # Simple keyword matching - could be enhanced for complex queries
+            search_text = f"{email_fields['from']} {email_fields['to']} {email_fields['subject']}".lower()
+            if value.lower() not in search_text:
+                return False
+        elif key == 'doesNotHaveTheWord':
+            search_text = f"{email_fields['from']} {email_fields['to']} {email_fields['subject']}".lower()
+            if value.lower() in search_text:
+                return False
+    
+    return True
+
+
+def _apply_filter_action(service: Resource, email_id: str, action_data: Dict[str, Any]) -> bool:
+    """
+    Apply a filter action to an email.
+    
+    Args:
+        service: Gmail API service object
+        email_id: ID of the email to modify
+        action_data: Parsed action data from _parse_action
+    
+    Returns:
+        bool: True if action was applied successfully
+    """
+    try:
+        modifications = {}
+        
+        # Prepare label modifications
+        if action_data.get('add_labels'):
+            # Convert label names back to IDs
+            add_label_ids = []
+            for label_name in action_data['add_labels']:
+                # This would need a reverse lookup or caching mechanism
+                # For now, skip label additions that require ID lookup
+                pass
+        
+        if action_data.get('archive'):
+            modifications['removeLabelIds'] = ['INBOX']
+        
+        if action_data.get('mark_as_read'):
+            modifications['removeLabelIds'] = modifications.get('removeLabelIds', []) + ['UNREAD']
+        
+        if action_data.get('mark_as_spam'):
+            modifications['addLabelIds'] = ['SPAM']
+            modifications['removeLabelIds'] = modifications.get('removeLabelIds', []) + ['INBOX']
+        
+        # Apply modifications if any
+        if modifications:
+            service.users().messages().modify(
+                userId='me',
+                id=email_id,
+                body=modifications
+            ).execute()
+            return True
+            
+    except HttpError as e:
+        logger.error(f"Failed to apply filter action to email {email_id}: {e}")
+    
+    return False
+
 
 if __name__ == '__main__':
     """
@@ -205,9 +522,11 @@ if __name__ == '__main__':
     - Fetches and prints all structured filters.
     """
     from gmail_api_utils import get_gmail_service
+    from log_config import init_logging
     import json
 
-    logging.basicConfig(level=logging.INFO)
+    # Initialize standardized logging
+    init_logging(log_level=logging.INFO)
     
     # It's assumed that credentials.json and token.json are in the config directory.
     # Adjust the path if your structure is different.

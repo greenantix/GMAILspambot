@@ -20,6 +20,9 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from gmail_api_utils import get_gmail_service, GmailLabelManager
 from gemini_config_updater import update_label_schema, update_category_rules, update_label_action_mappings
+from tools.filter_harvester import apply_existing_filters_to_backlog
+from exceptions import (GmailAPIError, EmailProcessingError, LLMConnectionError, 
+                       AuthenticationError, handle_exception_with_logging, wrap_gmail_api_call)
 import logging
 from logging.handlers import RotatingFileHandler
 
@@ -359,49 +362,211 @@ class GmailLMCleaner:
         return body
     
     def is_critical_email(self, email_data):
-        """Check if email is INBOX-level critical (interrupts dinner)."""
+        """
+        Check if email is INBOX-level critical (interrupts dinner).
+        Enhanced with improved patterns and confidence scoring.
+        """
         subject = email_data.get('subject', '').lower()
         sender = email_data.get('sender', '').lower()
         body = email_data.get('body', '').lower()
         
-        # Ultra-high priority triggers
-        critical_keywords = [
-            'security alert', 'account suspended', 'verify immediately', 'fraud detected',
-            'password reset', 'unauthorized access', 'login attempt', 'payment failed',
-            'account expires', 'urgent action required', 'expires today', 'deadline'
-        ]
+        # Ultra-high priority triggers - expanded and categorized
+        critical_patterns = {
+            'security_threats': [
+                'security alert', 'account suspended', 'verify immediately', 'fraud detected',
+                'unauthorized access', 'login attempt', 'suspicious activity', 'account compromised',
+                'verify your identity', 'account locked', 'unusual activity detected'
+            ],
+            'payment_urgent': [
+                'payment failed', 'card declined', 'payment overdue', 'invoice due',
+                'subscription canceled', 'payment required', 'billing issue', 'auto-pay failed'
+            ],
+            'account_expiry': [
+                'account expires', 'urgent action required', 'expires today', 'deadline',
+                'expires in', 'renew now', 'service termination', 'final notice'
+            ],
+            'personal_emergency': [
+                'emergency', 'urgent', 'asap', 'immediate action', 'time sensitive',
+                'important notice', 'response required', 'confirm receipt'
+            ]
+        }
         
-        # Critical sender patterns (only truly urgent stuff)
+        # Critical sender patterns (only truly urgent stuff) - enhanced
         critical_senders = [
-            'security@', 'fraud@', 'admin@', 'urgent@', 'critical@',
-            'noreply@paypal.com', 'alerts@chase.com'  # Financial security only
+            # Security and fraud
+            'security@', 'fraud@', 'alerts@', 'noreply@paypal.com', 'security-noreply@',
+            'account-security@', 'suspicious-activity@', 'identity@',
+            # Financial institutions (major ones only)
+            'alerts@chase.com', 'alerts@bankofamerica.com', 'notifications@wellsfargo.com',
+            'alerts@citi.com', 'security@discover.com', 'fraud@usbank.com',
+            # Critical services
+            'admin@', 'urgent@', 'critical@', 'emergency@', 'support@stripe.com',
+            # Government and legal
+            'noreply@irs.gov', '@ssa.gov', 'alerts@usps.com'
         ]
         
-        # Check for critical senders
+        # Confidence scoring
+        confidence_score = 0.0
+        reasons = []
+        
+        # Check for critical senders (high confidence)
         for critical_sender in critical_senders:
             if critical_sender in sender:
-                return True
+                confidence_score += 0.8
+                reasons.append(f"Critical sender: {critical_sender}")
+                break
         
-        # Check for critical keywords
+        # Check for critical keywords with context scoring
         full_text = (subject + ' ' + body).lower()
-        for keyword in critical_keywords:
-            if keyword in full_text:
-                return True
-        
-        # Check if it's a personal human (not automated)
-        if self.is_personal_human_sender(sender, email_data):
-            return True
+        for category, keywords in critical_patterns.items():
+            category_matches = 0
+            for keyword in keywords:
+                if keyword in full_text:
+                    category_matches += 1
+                    # Subject matches are more important than body matches
+                    if keyword in subject:
+                        confidence_score += 0.4
+                        reasons.append(f"Critical keyword in subject: {keyword}")
+                    else:
+                        confidence_score += 0.2
+                        reasons.append(f"Critical keyword in body: {keyword}")
             
-        return False
+            # Multiple keywords in same category increase confidence
+            if category_matches >= 2:
+                confidence_score += 0.3
+                reasons.append(f"Multiple {category} indicators")
+        
+        # Check if it's a personal human (moderate confidence)
+        if self.is_personal_human_sender(sender, email_data):
+            confidence_score += 0.6
+            reasons.append("Personal human sender")
+        
+        # Time-sensitive patterns boost
+        time_sensitive_patterns = ['expires in 24', 'expires today', 'final notice', 'last chance']
+        for pattern in time_sensitive_patterns:
+            if pattern in full_text:
+                confidence_score += 0.3
+                reasons.append(f"Time-sensitive: {pattern}")
+        
+        # Return True if confidence is above threshold
+        is_critical = confidence_score >= 0.7
+        
+        if is_critical and hasattr(self, 'logger'):
+            self.logger.debug(f"Critical email detected (confidence: {confidence_score:.2f}): {reasons}")
+        
+        return is_critical
 
     def is_priority_email(self, email_data):
-        """Check if email is PRIORITY-level (morning coffee review)."""
+        """
+        Check if email is PRIORITY-level (morning coffee review).
+        Enhanced with configuration file integration and confidence scoring.
+        """
         subject = email_data.get('subject', '').lower()
         sender = email_data.get('sender', '').lower()
         body = email_data.get('body', '').lower()
         
-        # Priority patterns - important but not urgent
-        priority_patterns = {
+        # Load priority patterns from config file
+        priority_patterns = self._load_priority_patterns()
+        
+        # Confidence scoring
+        confidence_score = 0.0
+        reasons = []
+        
+        # Check each priority pattern
+        for pattern_name, pattern in priority_patterns.items():
+            pattern_confidence = 0.0
+            
+            # Check senders with weighted scoring
+            for sender_pattern in pattern.get('senders', []):
+                if sender_pattern in sender:
+                    # Exact domain match gets higher score
+                    if sender_pattern.startswith('@') and sender.endswith(sender_pattern):
+                        pattern_confidence += 0.8
+                        reasons.append(f"Exact domain match: {sender_pattern}")
+                    else:
+                        pattern_confidence += 0.6
+                        reasons.append(f"Sender pattern match: {sender_pattern}")
+                    break
+            
+            # Check keywords with context scoring
+            full_text = (subject + ' ' + body).lower()
+            keyword_matches = 0
+            for keyword in pattern.get('keywords', []):
+                if keyword in full_text:
+                    keyword_matches += 1
+                    # Subject matches are more important
+                    if keyword in subject:
+                        pattern_confidence += 0.4
+                        reasons.append(f"Priority keyword in subject: {keyword}")
+                    else:
+                        pattern_confidence += 0.2
+                        reasons.append(f"Priority keyword in body: {keyword}")
+            
+            # Multiple keywords boost confidence
+            if keyword_matches >= 2:
+                pattern_confidence += 0.3
+                reasons.append(f"Multiple {pattern_name} keywords")
+            
+            # Pattern-specific scoring bonuses
+            if pattern_name == 'github' and 'security advisory' in full_text:
+                pattern_confidence += 0.5
+                reasons.append("GitHub security advisory (high priority)")
+            elif pattern_name == 'financial_monitoring' and any(kw in full_text for kw in ['credit score', 'fraud alert', 'large purchase']):
+                pattern_confidence += 0.4
+                reasons.append("Financial monitoring alert")
+            elif pattern_name == 'work_notifications' and 'deadline' in full_text:
+                pattern_confidence += 0.4
+                reasons.append("Work deadline notification")
+            
+            confidence_score += pattern_confidence
+        
+        # Additional priority indicators
+        priority_indicators = [
+            ('newsletter unsubscribe', 0.3, 'Newsletter management'),
+            ('account statement', 0.4, 'Financial statement'),
+            ('tax document', 0.6, 'Tax-related document'),
+            ('insurance', 0.3, 'Insurance communication'),
+            ('medical', 0.5, 'Medical communication'),
+            ('appointment', 0.4, 'Appointment notification'),
+            ('reservation confirmation', 0.4, 'Travel/booking confirmation'),
+            ('tracking', 0.2, 'Package tracking'),
+            ('receipt', 0.3, 'Purchase receipt')
+        ]
+        
+        full_text = (subject + ' ' + body).lower()
+        for indicator, score, description in priority_indicators:
+            if indicator in full_text:
+                confidence_score += score
+                reasons.append(description)
+        
+        # Professional email patterns
+        if self._is_professional_sender(sender):
+            confidence_score += 0.3
+            reasons.append("Professional sender domain")
+        
+        # Return True if confidence is above threshold
+        is_priority = confidence_score >= 0.5
+        
+        if is_priority and hasattr(self, 'logger'):
+            self.logger.debug(f"Priority email detected (confidence: {confidence_score:.2f}): {reasons}")
+        
+        return is_priority
+
+    def _load_priority_patterns(self):
+        """Load priority patterns from configuration file with fallback to defaults."""
+        try:
+            import json
+            config_path = 'config/priority_patterns.json'
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                    return config.get('priority_patterns', {})
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.warning(f"Could not load priority patterns config: {e}")
+        
+        # Fallback to default patterns if config fails
+        return {
             'github': {
                 'senders': ['notifications@github.com', 'noreply@github.com', '@github.com'],
                 'keywords': ['pull request', 'issue', 'release', 'security advisory', 'mentioned you']
@@ -423,44 +588,104 @@ class GmailLMCleaner:
                 'keywords': ['service update', 'billing', 'usage alert', 'deployment']
             }
         }
-        
-        # Check each priority pattern
-        for pattern_name, pattern in priority_patterns.items():
-            # Check senders
-            for sender_pattern in pattern['senders']:
-                if sender_pattern in sender:
-                    return True
-            
-            # Check keywords in context
-            full_text = (subject + ' ' + body).lower()
-            keyword_matches = 0
-            for keyword in pattern['keywords']:
-                if keyword in full_text:
-                    keyword_matches += 1
-            
-            # If multiple keywords match, it's likely priority
-            if keyword_matches >= 1:
-                return True
-        
-        return False
-
-    def is_personal_human_sender(self, sender, email_data):
-        """Detect if sender is a real person (not automated)."""
-        # Simple heuristics for human detection
-        human_indicators = [
-            # Not from common automated domains
-            not any(auto_domain in sender for auto_domain in [
-                'noreply@', 'no-reply@', 'donotreply@', 'notifications@', 
-                'support@', 'alerts@', 'admin@', 'info@'
-            ]),
-            # Contains typical personal domains (common but not foolproof)
-            any(personal_domain in sender for personal_domain in [
-                '@gmail.com', '@yahoo.com', '@hotmail.com', '@outlook.com'
-            ])
+    
+    def _is_professional_sender(self, sender):
+        """Check if sender appears to be from a professional organization."""
+        professional_domains = [
+            '.edu', '.gov', '.org', '.mil',  # Institutional domains
+            'hr@', 'admin@', 'office@', 'management@',  # Professional roles
+            'legal@', 'compliance@', 'finance@'
         ]
         
-        # If multiple indicators suggest human, likely personal
-        return sum(human_indicators) >= 1
+        # Check for corporate email patterns (not free email services)
+        free_email_domains = ['@gmail.com', '@yahoo.com', '@hotmail.com', '@outlook.com', '@aol.com']
+        is_not_free_email = not any(domain in sender for domain in free_email_domains)
+        
+        # Check for professional domain patterns
+        has_professional_pattern = any(pattern in sender for pattern in professional_domains)
+        
+        return is_not_free_email or has_professional_pattern
+
+    def is_personal_human_sender(self, sender, email_data):
+        """
+        Detect if sender is a real person (not automated).
+        Enhanced with better heuristics and scoring.
+        """
+        subject = email_data.get('subject', '').lower()
+        body = email_data.get('body', '').lower()
+        
+        # Automated sender patterns (strong indicators it's NOT human)
+        automated_patterns = [
+            'noreply@', 'no-reply@', 'donotreply@', 'notifications@', 
+            'support@', 'alerts@', 'admin@', 'info@', 'help@', 'service@',
+            'automated@', 'system@', 'robot@', 'bot@', 'mailer@',
+            'updates@', 'news@', 'marketing@', 'promo@', 'offers@'
+        ]
+        
+        # Personal domain indicators (common personal email services)
+        personal_domains = [
+            '@gmail.com', '@yahoo.com', '@hotmail.com', '@outlook.com',
+            '@icloud.com', '@aol.com', '@protonmail.com', '@yandex.com'
+        ]
+        
+        # Human-like patterns in content
+        human_language_patterns = [
+            'hi ', 'hello ', 'hey ', 'dear ', 'thanks', 'thank you',
+            'regards', 'best', 'sincerely', 'cheers', 'hope you',
+            'how are you', 'let me know', 'please let me', 'i hope',
+            'looking forward', 'talk soon', 'speak soon'
+        ]
+        
+        # Automated content patterns
+        automated_content_patterns = [
+            'unsubscribe', 'this is an automated', 'automatically generated',
+            'do not reply', 'please do not reply', 'system generated',
+            'no-reply', 'promotional email', 'marketing email'
+        ]
+        
+        confidence_score = 0.0
+        
+        # Check for automated sender patterns (strong negative indicator)
+        if any(pattern in sender for pattern in automated_patterns):
+            confidence_score -= 0.8
+        
+        # Check for personal domains (moderate positive indicator)
+        if any(domain in sender for domain in personal_domains):
+            confidence_score += 0.4
+        
+        # Check for human-like language patterns
+        full_text = (subject + ' ' + body).lower()
+        human_patterns_found = sum(1 for pattern in human_language_patterns if pattern in full_text)
+        if human_patterns_found > 0:
+            confidence_score += min(0.6, human_patterns_found * 0.2)
+        
+        # Check for automated content patterns (negative indicator)
+        automated_patterns_found = sum(1 for pattern in automated_content_patterns if pattern in full_text)
+        if automated_patterns_found > 0:
+            confidence_score -= min(0.6, automated_patterns_found * 0.3)
+        
+        # Check sender name patterns (first.last@domain suggests human)
+        sender_local = sender.split('@')[0] if '@' in sender else sender
+        if '.' in sender_local and not sender_local.startswith(('no', 'dont', 'do-not')):
+            # Could be first.last format
+            confidence_score += 0.3
+        
+        # Very short emails are less likely to be human (unless they're replies)
+        text_length = len(subject) + len(body)
+        if text_length < 50 and 're:' not in subject and 'fwd:' not in subject:
+            confidence_score -= 0.2
+        
+        # Personal signatures or phone numbers suggest human
+        if any(indicator in full_text for indicator in ['phone:', 'mobile:', 'cell:', 'sent from my']):
+            confidence_score += 0.4
+        
+        # Return True if confidence suggests human sender
+        is_human = confidence_score > 0.2
+        
+        if is_human and hasattr(self, 'logger'):
+            self.logger.debug(f"Human sender detected (confidence: {confidence_score:.2f}): {sender}")
+        
+        return is_human
 
     def is_important_email(self, email_data):
         """Legacy method - now checks for critical OR priority."""
@@ -505,27 +730,31 @@ class GmailLMCleaner:
 VALID CATEGORIES: INBOX, PRIORITY, BILLS, SHOPPING, NEWSLETTERS, SOCIAL, PERSONAL, JUNK, REVIEW
 
 RULES:
-- INBOX: Critical/urgent only (security alerts, personal humans, true emergencies)
+- INBOX: ONLY true security alerts and personal humans (NOT promotional emails claiming to be urgent)
 - PRIORITY: Important but not urgent (GitHub, Zillow, bank statements, work notifications)
 - BILLS: Receipts, invoices, financial documents
-- SHOPPING: Orders, promotions, retail
+- SHOPPING: Orders, promotions, retail, credit offers, bonus offers
 - NEWSLETTERS: News, updates, content
 - SOCIAL: Social media, gaming, apps
 - PERSONAL: Non-urgent personal messages, scheduling
-- JUNK: Spam, irrelevant content
+- JUNK: Spam, irrelevant content, debt collection, aggressive marketing
 - REVIEW: Uncertain emails (confidence < 0.7)
 
 FORMAT: {{"action": "CATEGORY", "reason": "brief explanation", "confidence": 0.0-1.0}}
 
-QUICK PATTERNS:
-- security@, fraud@, personal humans → INBOX (high confidence)
-- github@, zillow@, bank statements → PRIORITY (important but not urgent)
-- receipts, invoices, billing → BILLS
-- orders, shipping, promotions → SHOPPING
-- newsletters, unsubscribe → NEWSLETTERS
-- facebook, twitter, gaming → SOCIAL
+INBOX CRITERIA (be VERY strict):
+✅ Real security breaches, login alerts from unknown devices, fraud alerts
+✅ Personal emails from humans (not companies)
+✅ Two-factor authentication codes, password resets you initiated
 
-THINK: Would this interrupt dinner with family, or can it wait for morning coffee review?"""
+❌ NOT INBOX (move to appropriate category):
+❌ Credit card offers, bonus offers, rate promotions → SHOPPING
+❌ Account warnings from marketing companies → JUNK  
+❌ "Important updates" from financial services → NEWSLETTERS
+❌ Debt collection notices → JUNK
+❌ Marketing emails claiming to be "urgent" → SHOPPING/JUNK
+
+THINK: Is this a REAL emergency that requires immediate attention, or just marketing disguised as urgent?"""
             
             return prompt_template
             
@@ -748,12 +977,32 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 else:
                     return {"action": "KEEP", "reason": "Could not parse LLM response"}
             else:
-                return {"action": "KEEP", "reason": f"LLM error: {response.status_code}"}
+                raise LLMConnectionError(
+                    f"LM Studio request failed with status {response.status_code}",
+                    service_name="LM Studio",
+                    endpoint=LM_STUDIO_URL
+                )
                 
         except requests.exceptions.Timeout:
-            return {"action": "KEEP", "reason": "LLM timeout"}
+            raise LLMConnectionError(
+                "LM Studio request timed out",
+                service_name="LM Studio", 
+                endpoint=LM_STUDIO_URL
+            )
+        except requests.exceptions.ConnectionError:
+            raise LLMConnectionError(
+                "Could not connect to LM Studio",
+                service_name="LM Studio",
+                endpoint=LM_STUDIO_URL
+            )
+        except LLMConnectionError:
+            raise  # Re-raise our custom exception
         except Exception as e:
-            return {"action": "KEEP", "reason": f"LLM error: {str(e)}"}
+            raise LLMConnectionError(
+                f"LM Studio error: {str(e)}",
+                service_name="LM Studio",
+                endpoint=LM_STUDIO_URL
+            ) from e
 
     def validate_llm_decision(self, decision):
         """Validate and sanitize LLM decision with confidence scoring."""
@@ -1220,17 +1469,26 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
             # Build LLM prompt
             prompt = self.build_categorization_prompt(safe_email_data)
             
-            # Call LLM with timeout
-            decision = self.call_lm_studio(prompt, timeout=10)
-            
-            return self.validate_llm_decision(decision)
+            # Call LLM with longer timeout for stability
+            try:
+                decision = self.call_lm_studio(prompt, timeout=30)
+                return self.validate_llm_decision(decision)
+            except LLMConnectionError as e:
+                e.log_error(self.logger if hasattr(self, 'logger') else logging.getLogger())
+                return {"action": "KEEP", "reason": "LLM service unavailable", "confidence": 0.0}
             
         except Exception as e:
-            if hasattr(self, 'logger'):
-                self.logger.error(f"LLM analysis error: {str(e)}")
-            else:
-                print(f"LLM analysis error: {str(e)}")
-            return {"action": "KEEP", "reason": f"Analysis error: {str(e)}"}
+            email_id = email_data.get('id', 'unknown')
+            email_subject = email_data.get('subject', 'No Subject')
+            
+            error = EmailProcessingError(
+                "Failed to analyze email with LLM",
+                email_id=email_id,
+                email_subject=email_subject,
+                processing_step="llm_analysis"
+            )
+            error.log_error(self.logger if hasattr(self, 'logger') else logging.getLogger())
+            return {"action": "KEEP", "reason": f"Analysis error: {str(e)}", "confidence": 0.0}
     
     def create_label_if_not_exists(self, label_name):
         """Create a Gmail label if it doesn't exist."""
@@ -1259,6 +1517,20 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
             return created_label['id']
             
         except Exception as e:
+            # Check if it's a label conflict error - try to find existing label
+            if "Label name exists or conflicts" in str(e):
+                # Re-fetch labels to find the existing one
+                try:
+                    results = self.service.users().labels().list(userId='me').execute()
+                    labels = results.get('labels', [])
+                    for label in labels:
+                        if label['name'] == label_name:
+                            if hasattr(self, 'logger'):
+                                self.logger.debug(f"Found existing label {label_name}")
+                            return label['id']
+                except:
+                    pass
+            
             if hasattr(self, 'logger'):
                 self.logger.error(f"Error creating label {label_name}: {e}")
             else:
@@ -1503,11 +1775,41 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                     break
                 
                 if log_callback:
-                    log_callback(f"📥 Fetched {len(messages)} emails, processing in sub-batches...")
+                    log_callback(f"📥 Fetched {len(messages)} emails, applying existing filters first...")
                 
-                # Process this chunk in smaller batches
-                for i in range(0, len(messages), batch_size):
-                    sub_batch = messages[i:i+batch_size]
+                # Apply existing Gmail filters before LLM processing
+                email_ids = [msg['id'] for msg in messages]
+                filter_result = apply_existing_filters_to_backlog(
+                    self.service, 
+                    email_ids,
+                    progress_callback=lambda msg, prog: log_callback(f"🔧 {msg}") if log_callback else None
+                )
+                
+                # Update statistics with filter results
+                filter_processed = filter_result['processed_count']
+                remaining_ids = filter_result['remaining_ids']
+                filter_stats = filter_result['filter_stats']
+                
+                if log_callback:
+                    log_callback(f"🔧 Filters processed {filter_processed} emails, {len(remaining_ids)} need LLM analysis")
+                    if filter_stats:
+                        for filter_id, count in filter_stats.items():
+                            log_callback(f"  📋 Filter {filter_id}: {count} emails")
+                
+                # Create filtered message list for LLM processing
+                messages_for_llm = [msg for msg in messages if msg['id'] in remaining_ids]
+                
+                # Update processed count with filter results
+                processed_count += filter_processed
+                stats['total_processed'] += filter_processed
+                stats['by_category']['FILTERED'] = stats['by_category'].get('FILTERED', 0) + filter_processed
+                
+                if log_callback:
+                    log_callback(f"📊 Processing {len(messages_for_llm)} emails with LLM (after filter pre-processing)")
+                
+                # Process remaining emails in smaller batches
+                for i in range(0, len(messages_for_llm), batch_size):
+                    sub_batch = messages_for_llm[i:i+batch_size]
                     stats['batch_count'] += 1
                     
                     if log_callback:
@@ -2255,6 +2557,17 @@ class GmailCleanerGUI:
         ttk.Button(button_frame, text="Save Settings", command=self.save_settings).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Reset to Defaults", command=self.reset_settings).pack(side=tk.LEFT, padx=5)
         
+        # OAuth Management Section
+        oauth_frame = ttk.LabelFrame(scrollable_frame, text="OAuth & Authentication", padding=10)
+        oauth_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(oauth_frame, text="Re-authenticate with Gmail if you've updated OAuth restrictions:").pack(anchor=tk.W)
+        oauth_button_frame = ttk.Frame(oauth_frame)
+        oauth_button_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(oauth_button_frame, text="🔄 Re-login to Gmail", command=self.relogin_gmail).pack(side=tk.LEFT, padx=5)
+        ttk.Button(oauth_button_frame, text="🔧 Reset OAuth Token", command=self.reset_oauth_token).pack(side=tk.LEFT, padx=5)
+        
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         
@@ -2456,7 +2769,8 @@ class GmailCleanerGUI:
             proposed_rules = self.cleaner.analyze_with_gemini(subjects_file)
             
             if not proposed_rules:
-                self.log("❌ Gemini analysis failed")
+                self.log("❌ Gemini analysis failed - this may be due to OAuth authentication issues")
+                self.log("💡 Try re-authenticating in the Settings tab or check your network connection")
                 return
             
             self.log("✅ Gemini analysis complete! Showing proposed changes...")
@@ -2690,6 +3004,42 @@ class GmailCleanerGUI:
         # Title
         ttk.Label(main_frame, text="Gemini Analysis Results", font=('TkDefaultFont', 12, 'bold')).pack(pady=(0, 10))
         
+        # Check if we have valid proposed rules
+        if not proposed_rules or not isinstance(proposed_rules, dict):
+            # Show error message
+            error_frame = ttk.Frame(main_frame)
+            error_frame.pack(fill=tk.BOTH, expand=True)
+            
+            ttk.Label(error_frame, text="❌ No Analysis Results Available", 
+                     font=('TkDefaultFont', 14, 'bold'), foreground="red").pack(pady=20)
+            
+            error_text = scrolledtext.ScrolledText(error_frame, height=10, wrap=tk.WORD)
+            error_text.pack(fill=tk.BOTH, expand=True, pady=10)
+            
+            error_message = """Gemini analysis failed or returned no results.
+
+Possible causes:
+• OAuth authentication expired (try re-login in Settings)
+• Gemini API key issues
+• Network connectivity problems
+• No email data to analyze
+
+Solutions:
+1. Go to Settings tab and click "🔄 Re-login to Gmail"
+2. Check your internet connection
+3. Verify GEMINI_API_KEY in .env file
+4. Try exporting subjects first, then running analysis
+
+Debug Information:
+- Current proposed_rules value: """ + str(proposed_rules)
+            
+            error_text.insert(1.0, error_message)
+            error_text.config(state=tk.DISABLED)
+            
+            # Just a close button
+            ttk.Button(main_frame, text="Close", command=confirm_window.destroy).pack(pady=10)
+            return
+        
         # Create notebook for organized display
         notebook = ttk.Notebook(main_frame)
         notebook.pack(fill=tk.BOTH, expand=True)
@@ -2779,6 +3129,57 @@ class GmailCleanerGUI:
         self.model_combo['values'] = model_options
         if not models:
             self.model_combo['values'] = ["auto", "No models available"]
+
+    def relogin_gmail(self):
+        """Force re-authentication with Gmail."""
+        try:
+            self.log("🔄 Starting Gmail re-authentication...")
+            
+            # Delete existing token
+            token_path = "config/token.json"
+            if os.path.exists(token_path):
+                os.remove(token_path)
+                self.log("   ✅ Existing token deleted")
+            
+            # Reset cleaner connection
+            self.cleaner = None
+            
+            # Reconnect
+            if self.ensure_cleaner_connection():
+                self.log("✅ Gmail re-authentication successful!")
+                messagebox.showinfo("Success", "Gmail re-authentication completed successfully!")
+            else:
+                self.log("❌ Gmail re-authentication failed")
+                messagebox.showerror("Error", "Failed to re-authenticate with Gmail")
+                
+        except Exception as e:
+            self.log(f"❌ Error during re-authentication: {e}")
+            messagebox.showerror("Error", f"Re-authentication failed: {e}")
+
+    def reset_oauth_token(self):
+        """Reset the OAuth token without immediate re-authentication."""
+        try:
+            token_path = "config/token.json"
+            if os.path.exists(token_path):
+                # Backup the token first
+                backup_path = f"config/token_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                import shutil
+                shutil.copy2(token_path, backup_path)
+                
+                # Delete current token
+                os.remove(token_path)
+                self.log(f"✅ OAuth token reset successfully (backup saved to {backup_path})")
+                messagebox.showinfo("Success", f"OAuth token reset successfully!\nBackup saved to: {backup_path}")
+                
+                # Clear cleaner connection
+                self.cleaner = None
+            else:
+                self.log("⚠️ No OAuth token found to reset")
+                messagebox.showwarning("Warning", "No OAuth token file found")
+                
+        except Exception as e:
+            self.log(f"❌ Error resetting OAuth token: {e}")
+            messagebox.showerror("Error", f"Failed to reset OAuth token: {e}")
     
     def load_settings(self):
         """Load settings into UI."""
