@@ -1732,6 +1732,34 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
             print(f'Export error: {e}')
             return None # Return None on error
     
+    def test_gemini_connection(self):
+        """Test if Gemini API key is working with a simple request."""
+        try:
+            if not GEMINI_API_KEY:
+                return False
+            
+            import google.generativeai as genai
+            
+            # Configure Gemini
+            genai.configure(api_key=GEMINI_API_KEY)
+            
+            # Create model (using latest Gemini model)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # Test with a simple request
+            response = model.generate_content("Test connection - respond with OK")
+            
+            # Check if we got a valid response
+            if response and response.text:
+                return True
+            else:
+                return False
+                
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Gemini connection test failed: {str(e)}")
+            return False
+
     def analyze_with_gemini(self, subjects_file='email_subjects.txt'):
         """Use Gemini to analyze email subjects and generate filtering rules."""
         if not GEMINI_API_KEY:
@@ -2443,6 +2471,13 @@ class GmailCleanerGUI:
         """Thread function for auto-analyzing with Gemini."""
         try:
             self.log("🚀 Starting automatic email analysis with Gemini...")
+            
+            # Test Gemini API key first
+            self.log("🔑 Testing Gemini API key...")
+            if not self.cleaner.test_gemini_connection():
+                self.log("❌ Gemini API key test failed - check your .env file")
+                return
+            self.log("✅ Gemini API key validated")
             
             # Export subjects first
             self.log("📤 Exporting email subjects...")
