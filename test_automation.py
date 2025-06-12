@@ -34,5 +34,7 @@ class TestClass:
         pass
 
 if __name__ == "__main__":
-    # TODO: Add proper main execution
+    # TODO: Add proper main execution  
     print("Test automation file created")
+    # FIXME: Add error handling here
+    slow_function()
