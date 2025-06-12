@@ -2500,25 +2500,33 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 self.logger.error(f"Gemini connection test failed: {str(e)}")
             return False
 
-    def analyze_with_gemini(self, subjects_file='email_subjects.txt', max_retries=3):
+    def analyze_with_gemini(self, subjects_file='email_subjects.txt', max_retries=3, progress_callback=None):
         """Use Gemini to analyze email subjects and generate filtering rules."""
         import time
         import random
         
+        def update_progress(message):
+            if progress_callback:
+                progress_callback(message)
+            else:
+                print(message)
+        
         if not GEMINI_API_KEY:
-            print("❌ GEMINI_API_KEY not found in .env file")
+            update_progress("❌ GEMINI_API_KEY not found in .env file")
             return None
         
         if not os.path.exists(subjects_file):
-            print(f"❌ Subjects file {subjects_file} not found")
+            update_progress(f"❌ Subjects file {subjects_file} not found")
             return None
         
-        print("🤖 Analyzing email subjects with Gemini...")
+        update_progress("🤖 Analyzing email subjects with Gemini...")
         
         # Test connection first
+        update_progress("🔗 Testing Gemini API connection...")
         if not self.test_gemini_connection():
-            print("❌ Gemini API connection test failed")
+            update_progress("❌ Gemini API connection test failed")
             return None
+        update_progress("✅ Gemini API connection successful")
         
         def _make_gemini_request():
             # Read the subjects file
@@ -2617,11 +2625,14 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 raise ValueError(f"Could not parse JSON from Gemini response: {response_text[:200]}...")
         
         # Retry logic with exponential backoff
+        update_progress("📊 Reading and processing email subjects...")
         for attempt in range(max_retries + 1):
             try:
+                update_progress(f"🧠 Sending analysis request to Gemini (attempt {attempt + 1}/{max_retries + 1})...")
                 response_text = _make_gemini_request()
+                update_progress("🔍 Parsing Gemini response...")
                 rules = _parse_gemini_response(response_text)
-                print("✅ Gemini analysis complete!")
+                update_progress("✅ Gemini analysis complete!")
                 return rules
                 
             except Exception as e:
@@ -2630,43 +2641,43 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 # Check for specific error types
                 if "quota" in error_msg or "rate limit" in error_msg:
                     if attempt == max_retries:
-                        print(f"❌ Gemini quota/rate limit exceeded after {max_retries + 1} attempts")
+                        update_progress(f"❌ Gemini quota/rate limit exceeded after {max_retries + 1} attempts")
                         if hasattr(self, 'logger'):
                             self.logger.error(f"Gemini quota exceeded: {str(e)}")
                         return None
                     
                     # Longer delay for quota issues
                     delay = (5 ** attempt) + random.uniform(0, 3)
-                    print(f"⏳ Gemini quota limit, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
+                    update_progress(f"⏳ Gemini quota limit, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
                     time.sleep(delay)
                     
                 elif "blocked" in error_msg or "safety" in error_msg:
-                    print(f"❌ Gemini safety filter blocked the request: {str(e)}")
+                    update_progress(f"❌ Gemini safety filter blocked the request: {str(e)}")
                     if hasattr(self, 'logger'):
                         self.logger.error(f"Gemini safety block: {str(e)}")
                     return None
                     
                 elif "could not parse json" in error_msg or "json" in error_msg:
                     if attempt == max_retries:
-                        print(f"❌ Failed to parse Gemini JSON response after {max_retries + 1} attempts")
-                        print("Raw response preview:", str(e)[-200:])
+                        update_progress(f"❌ Failed to parse Gemini JSON response after {max_retries + 1} attempts")
+                        update_progress("Raw response preview: " + str(e)[-200:])
                         if hasattr(self, 'logger'):
                             self.logger.error(f"Gemini JSON parsing failed: {str(e)}")
                         return None
                     
                     delay = 2 + random.uniform(0, 1)
-                    print(f"🔄 Gemini JSON parsing failed, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
+                    update_progress(f"🔄 Gemini JSON parsing failed, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
                     time.sleep(delay)
                     
                 else:
                     if attempt == max_retries:
-                        print(f"❌ Gemini analysis failed after {max_retries + 1} attempts: {str(e)}")
+                        update_progress(f"❌ Gemini analysis failed after {max_retries + 1} attempts: {str(e)}")
                         if hasattr(self, 'logger'):
                             self.logger.error(f"Gemini analysis failed: {str(e)}")
                         return None
                     
                     delay = (2 ** attempt) + random.uniform(0, 1)
-                    print(f"🔄 Gemini error, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1}): {str(e)}")
+                    update_progress(f"🔄 Gemini error, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1}): {str(e)}")
                     time.sleep(delay)
         
         return None
@@ -3894,6 +3905,7 @@ class GmailCleanerGUI:
             
             # Export subjects first  
             self.log("📤 Exporting email subjects...")
+            self.log("🔍 Scanning recent emails (up to 500 from last 30 days)...")
             subjects_file = self.cleaner.export_subjects(max_emails=500, days_back=30)
             
             if not subjects_file:
@@ -3904,7 +3916,7 @@ class GmailCleanerGUI:
             
             # Analyze with Gemini
             self.log("🤖 Analyzing with Gemini...")
-            proposed_rules = self.cleaner.analyze_with_gemini(subjects_file)
+            proposed_rules = self.cleaner.analyze_with_gemini(subjects_file, progress_callback=self.log)
             
             if not proposed_rules:
                 error_msg = "Gemini analysis failed. This may be due to OAuth authentication issues, network problems, or API limits."
@@ -3914,6 +3926,7 @@ class GmailCleanerGUI:
                 return
             
             self.log("✅ Gemini analysis complete! Showing proposed changes...")
+            self.log(f"📋 Analysis returned: {list(proposed_rules.keys()) if isinstance(proposed_rules, dict) else type(proposed_rules).__name__}")
             
             # Show confirmation dialog with proposed changes
             self.root.after(0, lambda: self.show_confirmation_dialog(proposed_rules))
@@ -4240,6 +4253,41 @@ Debug Information:
             delete_text = scrolledtext.ScrolledText(delete_frame, height=8)
             delete_text.pack(fill=tk.BOTH, expand=True, pady=5)
             delete_text.insert(1.0, "\n".join(proposed_rules['auto_delete_senders']))
+        
+        # Handle any other keys in the response
+        handled_keys = {'important_keywords', 'important_senders', 'category_rules', 'auto_delete_senders'}
+        other_keys = set(proposed_rules.keys()) - handled_keys
+        
+        if other_keys:
+            other_frame = ttk.Frame(notebook)
+            notebook.add(other_frame, text="Other Suggestions")
+            
+            ttk.Label(other_frame, text="Additional analysis results:").pack(anchor=tk.W, pady=5)
+            other_text = scrolledtext.ScrolledText(other_frame, height=15, wrap=tk.WORD)
+            other_text.pack(fill=tk.BOTH, expand=True, pady=5)
+            
+            other_content = []
+            for key in sorted(other_keys):
+                other_content.append(f"=== {key.replace('_', ' ').title()} ===")
+                value = proposed_rules[key]
+                if isinstance(value, (list, dict)):
+                    other_content.append(json.dumps(value, indent=2))
+                else:
+                    other_content.append(str(value))
+                other_content.append("")
+            
+            other_text.insert(1.0, "\n".join(other_content))
+            other_text.config(state=tk.DISABLED)
+        
+        # Raw Data tab - always show this for debugging
+        raw_frame = ttk.Frame(notebook)
+        notebook.add(raw_frame, text="Raw Analysis Data")
+        
+        ttk.Label(raw_frame, text="Complete Gemini analysis response:").pack(anchor=tk.W, pady=5)
+        raw_text = scrolledtext.ScrolledText(raw_frame, height=15, wrap=tk.WORD)
+        raw_text.pack(fill=tk.BOTH, expand=True, pady=5)
+        raw_text.insert(1.0, json.dumps(proposed_rules, indent=2, default=str))
+        raw_text.config(state=tk.DISABLED)
         
         # Buttons frame
         buttons_frame = ttk.Frame(main_frame)
