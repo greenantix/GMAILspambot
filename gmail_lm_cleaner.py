@@ -2014,20 +2014,20 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 log_callback(f"  ✗ Error executing action: {e}")
     
     def process_inbox(self, log_callback=None):
-        """Process emails from the inbox in newest to oldest order."""
+        """Process emails from all categories in newest to oldest order."""
         if log_callback:
-            log_callback(f"🔍 Processing inbox emails (newest first)...")
+            log_callback(f"🔍 Processing emails from ALL categories (newest first)...")
         
-        # Focus on inbox only, newest first - no date restriction unless specified
+        # Process emails from all categories, not just inbox
         if self.settings.get('days_back', 0) > 0:
             date_after = (datetime.now() - timedelta(days=self.settings['days_back'])).strftime('%Y/%m/%d')
-            query = f'in:inbox after:{date_after}'
+            query = f'after:{date_after}'
             if log_callback:
-                log_callback(f"   Filtering to last {self.settings['days_back']} days")
+                log_callback(f"   📅 Filtering to last {self.settings['days_back']} days (all categories)")
         else:
-            query = 'in:inbox'
+            query = 'is:unread'  # Focus on unread emails from all categories
             if log_callback:
-                log_callback(f"   Processing all inbox emails")
+                log_callback(f"   📧 Processing all unread emails (from all categories)")
         
         try:
             results = self.service.users().messages().list(
@@ -2104,14 +2104,14 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
         if log_callback:
             log_callback("🚀 Starting bulk unread email cleanup...")
         
-        # Build query for unread emails
-        query_parts = ['is:unread', 'in:inbox']
+        # Build query for unread emails from ALL categories
+        query_parts = ['is:unread']  # Remove 'in:inbox' to include all categories
         
         if older_than_days > 0:
             date_before = (datetime.now() - timedelta(days=older_than_days)).strftime('%Y/%m/%d')
             query_parts.append(f'before:{date_before}')
             if log_callback:
-                log_callback(f"📅 Processing unread emails older than {older_than_days} days")
+                log_callback(f"📅 Processing unread emails from ALL categories older than {older_than_days} days")
         else:
             if log_callback:
                 log_callback("📧 Processing ALL unread emails")
@@ -2222,10 +2222,13 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 filter_stats = filter_result['filter_stats']
                 
                 if log_callback:
-                    log_callback(f"🔧 Filters processed {filter_processed} emails, {len(remaining_ids)} need LLM analysis")
-                    if filter_stats:
-                        for filter_id, count in filter_stats.items():
-                            log_callback(f"  📋 Filter {filter_id}: {count} emails")
+                    if filter_processed == 0:
+                        log_callback(f"🔧 No existing Gmail filters applied - {len(remaining_ids)} emails need LLM analysis")
+                    else:
+                        log_callback(f"🔧 Filters processed {filter_processed} emails, {len(remaining_ids)} need LLM analysis")
+                        if filter_stats:
+                            for filter_id, count in filter_stats.items():
+                                log_callback(f"  📋 Filter {filter_id}: {count} emails")
                 
                 # Create filtered message list for LLM processing
                 messages_for_llm = [msg for msg in messages if msg['id'] in remaining_ids]
@@ -2236,7 +2239,17 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 stats['by_category']['FILTERED'] = stats['by_category'].get('FILTERED', 0) + filter_processed
                 
                 if log_callback:
-                    log_callback(f"📊 Processing {len(messages_for_llm)} emails with LLM (after filter pre-processing)")
+                    if len(messages_for_llm) == 0:
+                        log_callback(f"✅ All {len(messages)} emails were handled by existing filters - no LLM processing needed")
+                    else:
+                        log_callback(f"📊 Processing {len(messages_for_llm)} emails with LLM (after filter pre-processing)")
+                
+                # Skip LLM processing if all emails were handled by filters
+                if len(messages_for_llm) == 0:
+                    # Very brief pause and continue to next page
+                    import time
+                    time.sleep(0.5)
+                    continue
                 
                 # Process remaining emails in smaller batches
                 for i in range(0, len(messages_for_llm), batch_size):
@@ -2255,12 +2268,6 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                                     log_callback("⏸️ Processing paused by user")
                                 return stats
                             
-                            processed_count += 1
-                            
-                            # Update progress 
-                            if progress_callback:
-                                progress_callback(processed_count, total_messages if total_messages > 0 else processed_count)
-                            
                             # Get email content
                             email_data = self.get_email_content(msg['id'])
                             if not email_data:
@@ -2268,9 +2275,9 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                                 continue
                             
                             # Log email being processed (every 10th to avoid spam)
-                            if log_callback and processed_count % 10 == 0:
+                            if log_callback and stats['total_processed'] % 10 == 0:
                                 subject_preview = email_data.get('subject', 'No Subject')[:50]
-                                log_callback(f"  📧 [{processed_count}] {subject_preview}...")
+                                log_callback(f"  📧 [{stats['total_processed']}] {subject_preview}...")
                             
                             # Analyze email
                             decision = self.analyze_email_with_llm(email_data)
@@ -2280,6 +2287,19 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                             # Update statistics
                             stats['by_category'][action] = stats['by_category'].get(action, 0) + 1
                             stats['total_processed'] += 1
+                            processed_count += 1
+                            
+                            # Update progress 
+                            if progress_callback:
+                                progress_callback(stats['total_processed'], total_messages if total_messages > 0 else stats['total_processed'])
+                            
+                            # Show LLM connection status occasionally
+                            if log_callback and stats['total_processed'] % 25 == 0:
+                                if action == "KEEP" and "LLM service unavailable" in reason:
+                                    log_callback(f"  ⚠️ LLM service appears offline - emails being marked as KEEP")
+                                elif action != "KEEP":
+                                    log_callback(f"  🤖 LLM active - last decision: {action}")
+                            
                             
                             # Log decision
                             self.log_email_processing(
@@ -2365,23 +2385,45 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
         print(f"📁 Output file: {output_file}")
         
         date_after = (datetime.now() - timedelta(days=days_back)).strftime('%Y/%m/%d')
-        query = f'in:inbox after:{date_after}'
-        print(f"📧 Query: {query}")
+        # Use broader query to get emails from all categories, not just inbox
+        query = f'after:{date_after}'
+        print(f"📧 Query: {query} (searching ALL email categories)")
         
         try:
-            results = self.service.users().messages().list(
-                userId='me',
-                q=query,
-                maxResults=max_emails
-            ).execute()
+            all_messages = []
+            next_page_token = None
             
-            messages = results.get('messages', [])
+            # Paginate through results to get up to max_emails
+            while len(all_messages) < max_emails:
+                remaining = max_emails - len(all_messages)
+                page_size = min(500, remaining)  # Gmail API max is 500 per request
+                
+                results = self.service.users().messages().list(
+                    userId='me',
+                    q=query,
+                    maxResults=page_size,
+                    pageToken=next_page_token
+                ).execute()
+                
+                page_messages = results.get('messages', [])
+                if not page_messages:
+                    break
+                    
+                all_messages.extend(page_messages)
+                next_page_token = results.get('nextPageToken')
+                
+                print(f"📧 Retrieved {len(all_messages)} emails so far...")
+                
+                if not next_page_token:
+                    break
+            
+            messages = all_messages[:max_emails]  # Limit to requested amount
             
             if not messages:
                 print('No messages found.')
                 return output_file # Return output_file even if no messages
             
-            print(f"📧 Found {len(messages)} emails to export")
+            print(f"📧 Found {len(messages)} emails to export (from all categories)")
             
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write(f"Email Subjects Export - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -2814,9 +2856,17 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
             
             if log_callback:
                 log_callback(f"Found {len(unique_messages)} unique promotional emails to analyze.")
+                log_callback(f"⏳ Processing emails for unsubscribe candidates (this may take a moment)...")
 
+            processed_count = 0
             for msg in unique_messages:
                 try:
+                    processed_count += 1
+                    
+                    # Show progress every 50 emails
+                    if log_callback and processed_count % 50 == 0:
+                        log_callback(f"  📧 Processed {processed_count}/{len(unique_messages)} emails...")
+                    
                     email_data = self.get_email_content(msg['id'])
                     if email_data:
                         sender = email_data['sender']
@@ -3601,6 +3651,9 @@ class GmailCleanerGUI:
     def _process_emails_thread(self):
         """Thread function for processing emails."""
         try:
+            # Disable the process button and show it's running
+            self.root.after(0, lambda: self.process_btn.config(state='disabled', text="Processing..."))
+            
             self.cleaner.process_inbox(log_callback=self.log)
             self.log("✅ Email processing completed successfully!")
         except Exception as e:
@@ -3634,8 +3687,11 @@ class GmailCleanerGUI:
     def _export_subjects_thread(self):
         """Thread function for exporting subjects."""
         try:
+            # Update button to show it's working
+            self.root.after(0, lambda: self.export_btn.config(state='disabled', text="Exporting..."))
+            
             self.log("🔍 Starting email subjects export...")
-            result = self.cleaner.export_subjects(max_emails=1000, days_back=30)
+            result = self.cleaner.export_subjects(max_emails=500, days_back=30)
             if result:
                 self.log("✅ Export complete! Check email_subjects.txt file")
                 self.log("\nUpload this file to Gemini and ask:")
@@ -3680,6 +3736,9 @@ class GmailCleanerGUI:
     def _auto_analyze_thread(self):
         """Thread function for auto-analyzing with Gemini."""
         try:
+            # Update button to show it's working
+            self.root.after(0, lambda: self.auto_analyze_btn.config(state='disabled', text="Analyzing..."))
+            
             self.log("🚀 Starting automatic email analysis with Gemini...")
             
             # Test Gemini API key first
@@ -3691,9 +3750,9 @@ class GmailCleanerGUI:
                 return
             self.log("✅ Gemini API key validated")
             
-            # Export subjects first
+            # Export subjects first  
             self.log("📤 Exporting email subjects...")
-            subjects_file = self.cleaner.export_subjects(max_emails=1000, days_back=30)
+            subjects_file = self.cleaner.export_subjects(max_emails=500, days_back=30)
             
             if not subjects_file:
                 error_msg = "Failed to export email subjects. Check your Gmail connection."
@@ -3732,8 +3791,6 @@ class GmailCleanerGUI:
             # Re-enable any disabled buttons
             if hasattr(self, 'auto_analyze_btn'):
                 self.auto_analyze_btn.config(state='normal', text="Auto-Analyze with Gemini")
-            if hasattr(self, 'analyze_btn'):
-                self.analyze_btn.config(state='normal')
         except Exception as e:
             print(f"Error restoring UI after analysis: {e}")
     
