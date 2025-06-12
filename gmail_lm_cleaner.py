@@ -3251,6 +3251,9 @@ class GmailCleanerGUI:
             self.handle_ui_exception(exc, val, tb)
         self.root.report_callback_exception = tkinter_exception_handler
         
+        # Set up window close handler for proper cleanup
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
         # Create notebook for tabs
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -3445,6 +3448,7 @@ class GmailCleanerGUI:
         self.processing_paused = False
         self.processing_cancelled = False
         self.current_stats = None
+        self.active_threads = []  # Track active threads for cleanup
         
     def setup_settings_tab(self, parent):
         """Setup the settings configuration tab."""
@@ -3676,7 +3680,9 @@ class GmailCleanerGUI:
         self.log_text.delete(1.0, tk.END)
         
         # Start processing in thread to avoid freezing UI
-        threading.Thread(target=self._process_emails_thread, daemon=True).start()
+        self.processing_thread = threading.Thread(target=self._process_emails_thread, daemon=True)
+        self.active_threads.append(self.processing_thread)
+        self.processing_thread.start()
     
     def _process_emails_thread(self):
         """Thread function for processing emails."""
@@ -3716,7 +3722,9 @@ class GmailCleanerGUI:
         self.log_text.delete(1.0, tk.END)
         
         # Start export in thread to avoid freezing UI
-        threading.Thread(target=self._export_subjects_thread, daemon=True).start()
+        self.export_thread = threading.Thread(target=self._export_subjects_thread, daemon=True)
+        self.active_threads.append(self.export_thread)
+        self.export_thread.start()
     
     def _export_subjects_thread(self):
         """Thread function for exporting subjects."""
@@ -3769,7 +3777,9 @@ class GmailCleanerGUI:
         self.log_text.delete(1.0, tk.END)
         
         # Start auto-analysis in thread to avoid freezing UI
-        threading.Thread(target=self._auto_analyze_thread, daemon=True).start()
+        self.analyze_thread = threading.Thread(target=self._auto_analyze_thread, daemon=True)
+        self.active_threads.append(self.analyze_thread)
+        self.analyze_thread.start()
     
     def _auto_analyze_thread(self):
         """Thread function for auto-analyzing with Gemini."""
@@ -4750,6 +4760,44 @@ Debug Information:
                 
         except Exception as e:
             self.log(f"Error refreshing rule labels: {e}")
+    
+    def cleanup_threads(self):
+        """Clean up any active background threads."""
+        try:
+            # Remove completed threads from tracking
+            self.active_threads = [t for t in self.active_threads if t.is_alive()]
+            
+            if self.active_threads:
+                print(f"Cleaning up {len(self.active_threads)} active threads...")
+                # Give threads a moment to finish naturally
+                import time
+                time.sleep(1)
+                
+                # Check again
+                self.active_threads = [t for t in self.active_threads if t.is_alive()]
+                if self.active_threads:
+                    print(f"Warning: {len(self.active_threads)} threads still active at shutdown")
+            
+        except Exception as e:
+            print(f"Error during thread cleanup: {e}")
+    
+    def on_closing(self):
+        """Handle window closing properly."""
+        try:
+            # Cancel any ongoing operations
+            self.processing_cancelled = True
+            
+            # Clean up threads
+            self.cleanup_threads()
+            
+            # Destroy the window
+            self.root.destroy()
+            
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+            # Force exit if cleanup fails
+            import sys
+            sys.exit(1)
     
     def run(self):
         """Start the GUI."""
