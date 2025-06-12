@@ -319,6 +319,8 @@ class LLMdiverDaemon:
                 "--style", "markdown",
                 "--compress",
                 "--remove-comments",
+                "--remove-empty-lines",
+                "--top-files-len", "10",  # Limit to top 10 files
                 "--include", ",".join(self.config.config["repomix"]["include_patterns"]),
                 "--ignore", ",".join(self.config.config["repomix"]["ignore_patterns"])
             ]
