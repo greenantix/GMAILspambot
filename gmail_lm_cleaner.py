@@ -2908,13 +2908,19 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 log_callback(f"Error analyzing detailed unsubscribe candidates: {e}")
             return []
 
-    def process_unsubscribe_requests(self, candidates):
+    def process_unsubscribe_requests(self, candidates, max_tabs=5, auto_process=False):
         """
         Process unsubscribe requests for selected candidates.
         Returns tuple of (success_count, failed_count).
+        
+        Args:
+            candidates: List of unsubscribe candidates
+            max_tabs: Maximum browser tabs to open (to prevent tab explosion)
+            auto_process: If True, automatically send emails; if False, just open URLs
         """
         success_count = 0
         failed_count = 0
+        tabs_opened = 0
         
         for candidate in candidates:
             sender = candidate['sender']
@@ -2927,8 +2933,16 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                     unsubscribe_info = self.extract_unsubscribe_info(latest_msg_id)
                     
                     if unsubscribe_info:
-                        if self.attempt_unsubscribe(unsubscribe_info, sender):
+                        # Check if we should limit browser tabs
+                        if unsubscribe_info.get('urls') and tabs_opened >= max_tabs:
+                            self.logger.info(f"Skipping {sender} - tab limit reached ({max_tabs})")
+                            failed_count += 1
+                            continue
+                            
+                        if self.attempt_unsubscribe(unsubscribe_info, sender, auto_process):
                             success_count += 1
+                            if unsubscribe_info.get('urls'):
+                                tabs_opened += 1
                             self.logger.info(f"Successfully processed unsubscribe for {sender}")
                         else:
                             failed_count += 1
@@ -2991,24 +3005,19 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
             self.logger.error(f"Error extracting unsubscribe info from message {message_id}: {e}")
             return None
 
-    def attempt_unsubscribe(self, unsubscribe_info, sender):
+    def attempt_unsubscribe(self, unsubscribe_info, sender, auto_process=False):
         """
         Attempt to unsubscribe using the provided unsubscribe information.
         Returns True if successful, False otherwise.
+        
+        Args:
+            unsubscribe_info: Dict with URLs and/or emails for unsubscribing
+            sender: Email sender address
+            auto_process: If True, automatically send emails; if False, just open URLs
         """
         try:
-            # For now, we'll just open the unsubscribe URL in the user's browser
-            # In a production system, you might want to be more sophisticated
-            
-            if unsubscribe_info.get('urls'):
-                url = unsubscribe_info['urls'][0]  # Use the first URL
-                import webbrowser
-                webbrowser.open(url)
-                self.logger.info(f"Opened unsubscribe URL for {sender}: {url}")
-                return True
-                
-            elif unsubscribe_info.get('emails'):
-                # Send unsubscribe email automatically
+            if unsubscribe_info.get('emails') and auto_process:
+                # Send unsubscribe email automatically (only when auto_process=True)
                 email = unsubscribe_info['emails'][0]
                 self.logger.info(f"Sending unsubscribe email for {sender} to: {email}")
                 
@@ -3018,12 +3027,24 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                     return True
                 else:
                     self.logger.warning(f"Failed to send unsubscribe email for {sender}")
-                    # Fall back to opening the email client
-                    import webbrowser
-                    mailto_url = f"mailto:{email}?subject=Unsubscribe&body=Please unsubscribe me from this mailing list."
-                    webbrowser.open(mailto_url)
-                    self.logger.info(f"Opened email client with unsubscribe message for {sender}")
-                    return True
+                    return False
+                    
+            elif unsubscribe_info.get('urls'):
+                # Open unsubscribe URL in browser (but limit to prevent tab explosion)
+                url = unsubscribe_info['urls'][0]  # Use the first URL
+                import webbrowser
+                webbrowser.open(url)
+                self.logger.info(f"Opened unsubscribe URL for {sender}: {url}")
+                return True
+                
+            elif unsubscribe_info.get('emails'):
+                # For mailto, open email client instead of sending automatically
+                email = unsubscribe_info['emails'][0]
+                import webbrowser
+                mailto_url = f"mailto:{email}?subject=Unsubscribe&body=Please unsubscribe me from this mailing list."
+                webbrowser.open(mailto_url)
+                self.logger.info(f"Opened email client with unsubscribe message for {sender}")
+                return True
             
             return False
             
@@ -3280,9 +3301,14 @@ class GmailCleanerGUI:
         
         ttk.Button(control_frame, text="Connect to Gmail", command=self.connect_gmail).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Setup Gmail Filters", command=self.setup_filters).pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="Process Emails", command=self.process_emails).pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="Export Subjects", command=self.export_subjects).pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="Auto-Analyze with Gemini", command=self.auto_analyze).pack(side=tk.LEFT, padx=5)
+        self.process_btn = ttk.Button(control_frame, text="Process Emails", command=self.process_emails)
+        self.process_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.export_btn = ttk.Button(control_frame, text="Export Subjects", command=self.export_subjects)
+        self.export_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.auto_analyze_btn = ttk.Button(control_frame, text="Auto-Analyze with Gemini", command=self.auto_analyze)
+        self.auto_analyze_btn.pack(side=tk.LEFT, padx=5)
         
         # Options frame
         options_frame = ttk.LabelFrame(parent, text="Options", padding=10)
@@ -3636,6 +3662,10 @@ class GmailCleanerGUI:
     
     def process_emails(self):
         """Process emails in a separate thread."""
+        # Prevent double-clicking
+        if hasattr(self, 'process_btn') and self.process_btn['state'] == 'disabled':
+            return
+            
         if not self.ensure_cleaner_connection():
             messagebox.showwarning("Warning", "Failed to establish Gmail connection")
             return
@@ -3674,6 +3704,10 @@ class GmailCleanerGUI:
     
     def export_subjects(self):
         """Export email subjects for analysis."""
+        # Prevent double-clicking
+        if hasattr(self, 'export_btn') and self.export_btn['state'] == 'disabled':
+            return
+            
         if not self.ensure_cleaner_connection():
             messagebox.showwarning("Warning", "Failed to establish Gmail connection")
             return
@@ -3719,6 +3753,10 @@ class GmailCleanerGUI:
     
     def auto_analyze(self):
         """Auto-analyze emails with Gemini and update settings."""
+        # Prevent double-clicking
+        if hasattr(self, 'auto_analyze_btn') and self.auto_analyze_btn['state'] == 'disabled':
+            return
+            
         if not self.ensure_cleaner_connection():
             messagebox.showwarning("Warning", "Failed to establish Gmail connection")
             return
