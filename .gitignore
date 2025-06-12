@@ -91,3 +91,9 @@ rules/.initialized
 systemd_units/
 gmail-autonomy.logrotate
 logs/categorization_history.json
+logs/
+
+# Personal email data - never commit
+email_subjects.txt
+exports/*.json
+logs/*.log*
