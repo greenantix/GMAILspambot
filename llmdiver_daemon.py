@@ -382,8 +382,7 @@ class LLMdiverDaemon:
                 "--compress",
                 "--remove-comments",
                 "--remove-empty-lines",
-                "--top-files-len", "3",  # Only top 3 files for small context
-                "--no-files",  # Metadata only mode - just structure and stats
+                "--top-files-len", "10",  # Top 10 files for analysis
                 "--include", ",".join(self.config.config["repomix"]["include_patterns"]),
                 "--ignore", ",".join(self.config.config["repomix"]["ignore_patterns"])
             ]
