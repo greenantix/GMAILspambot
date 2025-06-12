@@ -51,6 +51,30 @@ _label_id_to_name_cache = {}
 _label_name_to_id_cache = {}
 
 
+# Global cache for filters to avoid repeated API calls within a single run
+_filter_cache = None
+
+
+def get_and_cache_filters(service: Resource, force_refresh: bool = False) -> List[Dict[str, Any]]:
+    """
+    Fetches filters and caches them globally to prevent redundant API calls.
+
+    Args:
+        service (Resource): The authenticated Gmail API service object.
+        force_refresh (bool): If True, fetches filters from the API even if cached.
+
+    Returns:
+        List[Dict[str, Any]]: A list of structured filter data.
+    """
+    global _filter_cache
+    if _filter_cache is None or force_refresh:
+        logger.info("Fetching and caching filters from Gmail API...")
+        _filter_cache = fetch_and_parse_filters(service)
+    else:
+        logger.info("Using cached filters.")
+    return _filter_cache
+
+
 def _get_label_name_from_id(service: Resource, label_id: str) -> Optional[str]:
     """
     Retrieves the name of a label from its ID, using a cache to avoid redundant API calls.
@@ -375,119 +399,143 @@ def fetch_and_parse_filters(service: Resource) -> List[Dict[str, Any]]:
     return structured_filters
 
 
-def apply_existing_filters_to_backlog(service: Resource, email_ids: List[str], 
-                                    progress_callback=None) -> Dict[str, Any]:
+def apply_existing_filters_to_backlog(service: Resource, email_ids: List[str] = None,
+                                    progress_callback=None, use_server_side=True) -> Dict[str, Any]:
     """
-    Applies existing Gmail filters to a batch of emails to pre-process them
-    before LLM analysis.
-    
+    Applies existing Gmail filters using server-side batch operations for maximum efficiency.
+    This is a complete refactor for server-side processing as per the remediation plan.
+
     Args:
         service (Resource): The authenticated Gmail API service object.
-        email_ids (List[str]): List of email IDs to process.
+        email_ids (List[str], optional): Legacy parameter, now ignored for server-side processing.
         progress_callback: Optional callback function for progress updates.
-    
+        use_server_side (bool): If False, this function does nothing.
+
     Returns:
         Dict[str, Any]: Statistics about filter applications including:
-            - processed_count: Number of emails processed by filters
-            - remaining_ids: Email IDs that still need LLM processing
-            - filter_stats: Dictionary of filter ID -> count applied
+            - processed_count: Total number of messages processed across all filters.
+            - filter_stats: Dictionary of filter ID -> count of messages it affected.
+            - server_side_processed: Same as processed_count.
+            - remaining_ids: Always empty, as this function processes the entire backlog.
     """
-    if not email_ids:
-        return {
-            "processed_count": 0,
-            "remaining_ids": [],
-            "filter_stats": {}
-        }
-    
-    # Fetch all existing filters
-    structured_filters = fetch_and_parse_filters(service)
+    if not use_server_side:
+        logger.warning("Server-side processing is disabled. Skipping filter application.")
+        return {"processed_count": 0, "filter_stats": {}, "server_side_processed": 0, "remaining_ids": []}
+
+    logger.info("Starting server-side filter application for the entire backlog.")
+
+    # Use the cached filter fetcher
+    structured_filters = get_and_cache_filters(service)
     if not structured_filters:
-        logger.info("No filters found, all emails will need LLM processing")
-        return {
-            "processed_count": 0,
-            "remaining_ids": email_ids,
-            "filter_stats": {}
-        }
-    
-    processed_emails = set()
+        logger.info("No user-defined filters found. No server-side processing will occur.")
+        return {"processed_count": 0, "filter_stats": {}, "server_side_processed": 0, "remaining_ids": []}
+
+    total_processed_count = 0
     filter_stats = {}
-    remaining_ids = []
-    
-    logger.info(f"Applying {len(structured_filters)} filters to {len(email_ids)} emails")
-    
-    try:
-        # Process emails in batches to avoid API limits
-        batch_size = 50
-        for i in range(0, len(email_ids), batch_size):
-            batch_ids = email_ids[i:i + batch_size]
+
+    for i, filter_data in enumerate(structured_filters):
+        filter_id = filter_data['id']
+        query = filter_data['query']
+        action = filter_data['action']
+        
+        if not query:
+            logger.warning(f"Filter {filter_id} has an empty query. Skipping.")
+            continue
+
+        if progress_callback:
+            progress = (i / len(structured_filters)) * 100
+            progress_callback(f"Processing filter {i+1}/{len(structured_filters)}: '{query}'", progress)
+
+        try:
+            logger.info(f"Executing query for filter '{filter_id}': {query}")
             
-            # Get email metadata for this batch
-            try:
-                # Use batch request for efficiency
-                batch_emails = []
-                for email_id in batch_ids:
-                    email = service.users().messages().get(
-                        userId='me', 
-                        id=email_id,
-                        format='metadata',
-                        metadataHeaders=['From', 'To', 'Subject']
-                    ).execute()
-                    batch_emails.append((email_id, email))
+            # 1. Find all matching message IDs for the filter's query
+            message_ids = []
+            page_token = None
+            while True:
+                response = wrap_gmail_api_call(
+                    service.users().messages().list(userId='me', q=query, pageToken=page_token).execute,
+                    operation=f"list messages for filter '{query}'"
+                )
+                messages = response.get('messages', [])
+                if messages:
+                    message_ids.extend([msg['id'] for msg in messages])
                 
-            except HttpError as e:
-                logger.error(f"Failed to fetch email batch: {e}")
-                remaining_ids.extend(batch_ids)
+                page_token = response.get('nextPageToken')
+                if not page_token:
+                    break
+            
+            if not message_ids:
+                logger.info(f"Filter '{filter_id}' did not match any messages.")
                 continue
+
+            logger.info(f"Filter '{filter_id}' matched {len(message_ids)} messages. Applying actions...")
+
+            # 2. Determine actions (convert label names to IDs)
+            add_label_ids = [_get_label_id_from_name(service, name) for name in action.get('add_labels', [])]
+            remove_label_ids = [_get_label_id_from_name(service, name) for name in action.get('remove_labels', [])]
             
-            # Apply filters to each email in the batch
-            for email_id, email_data in batch_emails:
-                if email_id in processed_emails:
-                    continue
+            # Handle special actions
+            if action.get('archive'):
+                remove_label_ids.append('INBOX')
+            if action.get('mark_as_read'):
+                remove_label_ids.append('UNREAD')
+            if action.get('mark_as_spam'):
+                add_label_ids.append('SPAM')
+
+            # Filter out None values from failed lookups
+            add_label_ids = [lid for lid in add_label_ids if lid]
+            remove_label_ids = [lid for lid in remove_label_ids if lid]
+
+            # 3. Apply actions using batchModify
+            if add_label_ids or remove_label_ids:
+                message_count = len(message_ids)
+                logger.info(f"Applying actions to {message_count} messages in batches of 1000...")
+
+                # Batch the message IDs into chunks of 1000
+                for j in range(0, message_count, 1000):
+                    batch_ids = message_ids[j:j + 1000]
+                    logger.debug(f"Processing batch {j//1000 + 1} with {len(batch_ids)} messages.")
                     
-                # Extract email fields for filter matching
-                headers = {h['name'].lower(): h['value'] 
-                          for h in email_data.get('payload', {}).get('headers', [])}
+                    batch_modify_body = {
+                        'ids': batch_ids,
+                        'addLabelIds': list(set(add_label_ids)),
+                        'removeLabelIds': list(set(remove_label_ids))
+                    }
+                    
+                    try:
+                        wrap_gmail_api_call(
+                            service.users().messages().batchModify(userId='me', body=batch_modify_body).execute,
+                            operation=f"batch modify for filter '{filter_id}'"
+                        )
+                        logger.debug(f"Successfully applied filter '{filter_id}' to batch of {len(batch_ids)} messages.")
+                    except GmailAPIError as e:
+                        e.log_error(logger)
+                        logger.error(f"Failed to apply batch for filter {filter_id}. Continuing...")
+                        continue
                 
-                email_fields = {
-                    'from': headers.get('from', ''),
-                    'to': headers.get('to', ''),
-                    'subject': headers.get('subject', ''),
-                }
-                
-                # Check each filter against this email
-                filter_applied = False
-                for filter_data in structured_filters:
-                    if _email_matches_filter(email_fields, filter_data):
-                        # Apply the filter action
-                        if _apply_filter_action(service, email_id, filter_data['action']):
-                            processed_emails.add(email_id)
-                            filter_stats[filter_data['id']] = filter_stats.get(filter_data['id'], 0) + 1
-                            filter_applied = True
-                            logger.debug(f"Applied filter {filter_data['id']} to email {email_id}")
-                            break  # Only apply first matching filter
-                
-                if not filter_applied:
-                    remaining_ids.append(email_id)
-            
-            # Update progress
-            if progress_callback:
-                progress = min(100, ((i + batch_size) / len(email_ids)) * 100)
-                progress_callback(f"Applied filters to {min(i + batch_size, len(email_ids))} emails", progress)
-    
-    except Exception as e:
-        logger.error(f"Error applying filters to backlog: {e}")
-        # Return remaining emails for LLM processing
-        remaining_ids.extend([eid for eid in email_ids if eid not in processed_emails])
-    
+                # 4. Collect stats
+                count = len(message_ids)
+                total_processed_count += count
+                filter_stats[filter_id] = count
+                logger.info(f"Successfully applied filter '{filter_id}' to {count} messages.")
+
+        except GmailAPIError as e:
+            e.log_error(logger)
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while processing filter {filter_id}: {e}")
+
+    if progress_callback:
+        progress_callback("Server-side filtering complete.", 100)
+
     result = {
-        "processed_count": len(processed_emails),
-        "remaining_ids": remaining_ids,
-        "filter_stats": filter_stats
+        "processed_count": total_processed_count,
+        "filter_stats": filter_stats,
+        "server_side_processed": total_processed_count,
+        "remaining_ids": [] # Legacy, no longer relevant
     }
-    
-    logger.info(f"Filter processing complete: {len(processed_emails)} processed by filters, "
-                f"{len(remaining_ids)} remaining for LLM")
-    
+
+    logger.info(f"Server-side filtering complete. Total messages processed: {total_processed_count}")
     return result
 
 

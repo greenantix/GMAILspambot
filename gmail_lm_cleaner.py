@@ -2090,7 +2090,7 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
             self.learning_engine.suggest_rule_updates()
             self.learning_engine.detect_new_patterns()
     
-    def process_email_backlog(self, batch_size=100, older_than_days=0, log_callback=None, progress_callback=None, pause_callback=None):
+    def process_email_backlog(self, batch_size=100, older_than_days=0, query_override=None, log_callback=None, progress_callback=None, pause_callback=None):
         """
         Process all unread emails to get to inbox zero.
         
@@ -2105,18 +2105,21 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
             log_callback("🚀 Starting bulk unread email cleanup...")
         
         # Build query for unread emails from ALL categories
-        query_parts = ['is:unread']  # Remove 'in:inbox' to include all categories
-        
-        if older_than_days > 0:
-            date_before = (datetime.now() - timedelta(days=older_than_days)).strftime('%Y/%m/%d')
-            query_parts.append(f'before:{date_before}')
+        if query_override:
+            query = query_override
             if log_callback:
-                log_callback(f"📅 Processing unread emails from ALL categories older than {older_than_days} days")
+                log_callback(f"🔍 Using custom query for backlog processing: {query}")
         else:
-            if log_callback:
-                log_callback("📧 Processing ALL unread emails")
-        
-        query = ' '.join(query_parts)
+            query_parts = ['is:unread']
+            if older_than_days > 0:
+                date_before = (datetime.now() - timedelta(days=older_than_days)).strftime('%Y/%m/%d')
+                query_parts.append(f'before:{date_before}')
+                if log_callback:
+                    log_callback(f"📅 Processing unread emails from ALL categories older than {older_than_days} days")
+            else:
+                if log_callback:
+                    log_callback("📧 Processing ALL unread emails")
+            query = ' '.join(query_parts)
         
         # Initialize statistics
         stats = {
@@ -3239,12 +3242,103 @@ class GmailCleanerGUI:
         except Exception as e:
             self.log(f"⚠️ Auto-connect failed: {e}")
             self.log("   You can manually connect using the 'Connect to Gmail' button")
+    
+    def setup_ui_styling(self):
+        """Set up professional styling for the UI."""
+        style = ttk.Style()
+        
+        # Use a modern theme as base
+        style.theme_use('clam')
+        
+        # Configure colors
+        bg_color = '#f0f0f0'
+        accent_color = '#0078d4'
+        success_color = '#107c10'
+        warning_color = '#ff8c00'
+        error_color = '#d13438'
+        text_color = '#323130'
+        
+        # Configure button styles
+        style.configure('TButton',
+                       padding=(10, 5),
+                       font=('Segoe UI', 9))
+        
+        style.configure('Primary.TButton',
+                       background=accent_color,
+                       foreground='white',
+                       padding=(12, 6),
+                       font=('Segoe UI', 9, 'bold'))
+        
+        style.configure('Success.TButton',
+                       background=success_color,
+                       foreground='white',
+                       padding=(10, 5))
+        
+        style.configure('Warning.TButton',
+                       background=warning_color,
+                       foreground='white',
+                       padding=(10, 5))
+        
+        # Configure label styles
+        style.configure('TLabel',
+                       background=bg_color,
+                       foreground=text_color,
+                       font=('Segoe UI', 9))
+        
+        style.configure('Title.TLabel',
+                       font=('Segoe UI', 12, 'bold'),
+                       foreground=accent_color)
+        
+        style.configure('Subtitle.TLabel',
+                       font=('Segoe UI', 10, 'bold'),
+                       foreground=text_color)
+        
+        style.configure('Status.TLabel',
+                       font=('Segoe UI', 9),
+                       foreground=success_color)
+        
+        style.configure('Error.TLabel',
+                       font=('Segoe UI', 9),
+                       foreground=error_color)
+        
+        # Configure frame styles  
+        style.configure('TFrame',
+                       background=bg_color,
+                       relief='flat')
+        
+        style.configure('Card.TFrame',
+                       background='white',
+                       relief='solid',
+                       borderwidth=1)
+        
+        # Configure notebook styles
+        style.configure('TNotebook',
+                       background=bg_color,
+                       tabmargins=[2, 5, 2, 0])
+        
+        style.configure('TNotebook.Tab',
+                       padding=[12, 8],
+                       font=('Segoe UI', 9))
+        
+        # Configure progressbar
+        style.configure('TProgressbar',
+                       background=accent_color,
+                       troughcolor='#e1dfdd',
+                       borderwidth=0,
+                       lightcolor=accent_color,
+                       darkcolor=accent_color)
+        
+        # Set root background
+        self.root.configure(bg=bg_color)
         
     def setup_ui(self):
         """Create the GUI interface."""
         self.root = tk.Tk()
         self.root.title("Gmail Intelligent Cleaner")
-        self.root.geometry("800x600")
+        self.root.geometry("900x700")
+        
+        # Set up professional styling
+        self.setup_ui_styling()
         
         # Set up tkinter exception handler now that root exists
         def tkinter_exception_handler(exc, val, tb):
@@ -4486,16 +4580,41 @@ Debug Information:
                     messagebox.showerror("Error", f"Failed to rename label: {e}")
     
     def delete_label(self, label_name):
-        """Delete a Gmail label."""
+        """Delete a Gmail label and optionally its corresponding rule file."""
         if not self.gmail_label_manager:
             messagebox.showwarning("Warning", "Please refresh labels first")
             return
         
-        if messagebox.askyesno("Confirm Delete", f"Delete label '{label_name}'?\n\nThis will remove the label from all emails."):
+        # Check if a corresponding rule file exists
+        rule_file_path = os.path.join("rules", f"{label_name}.json")
+        has_rule_file = os.path.exists(rule_file_path)
+        
+        # Prepare confirmation message
+        confirm_msg = f"Delete label '{label_name}'?\n\nThis will remove the label from all emails."
+        if has_rule_file:
+            confirm_msg += f"\n\nA rule file '{label_name}.json' also exists. Do you want to delete it as well?"
+        
+        if messagebox.askyesno("Confirm Delete", confirm_msg):
             try:
+                # Delete the Gmail label
                 if self.gmail_label_manager.delete_label(label_name):
                     self.log(f"Deleted label: {label_name}")
-                    messagebox.showinfo("Success", f"Label '{label_name}' deleted successfully")
+                    
+                    # If rule file exists, ask to delete it too
+                    if has_rule_file:
+                        if messagebox.askyesno("Delete Rule File", f"Also delete the rule file '{label_name}.json'?"):
+                            try:
+                                os.remove(rule_file_path)
+                                self.log(f"Deleted rule file: {label_name}.json")
+                                messagebox.showinfo("Success", f"Label '{label_name}' and its rule file deleted successfully")
+                            except Exception as e:
+                                self.log(f"Error deleting rule file: {e}")
+                                messagebox.showwarning("Partial Success", f"Label '{label_name}' deleted but failed to delete rule file: {e}")
+                        else:
+                            messagebox.showinfo("Success", f"Label '{label_name}' deleted successfully (rule file kept)")
+                    else:
+                        messagebox.showinfo("Success", f"Label '{label_name}' deleted successfully")
+                    
                     self.refresh_labels()
                     self.setup_label_mappings_table()  # Refresh mappings table
                 else:

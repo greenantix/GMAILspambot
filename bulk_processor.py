@@ -13,8 +13,57 @@ import argparse
 from datetime import datetime
 from gmail_lm_cleaner import GmailLMCleaner
 from log_config import init_logging
-from tools.backlog_analyzer import analyze_backlog, export_analysis_report
+from tools.filter_harvester import apply_existing_filters_to_backlog, fetch_and_parse_filters
 from exceptions import GmailAPIError, EmailProcessingError, LLMConnectionError
+
+
+def run_server_side_filter_pass(cleaner, log_callback):
+    """
+    Phase 1: Apply all existing user filters on the server side.
+    """
+    log_callback("🚀 Phase 1: Starting server-side filter pass...")
+    
+    try:
+        stats = apply_existing_filters_to_backlog(
+            cleaner.service,
+            progress_callback=lambda msg, prog: log_callback(f"Filter Progress: {msg} ({prog:.0f}%)")
+        )
+        
+        processed_count = stats.get('server_side_processed', 0)
+        filter_stats = stats.get('filter_stats', {})
+        
+        log_callback(f"✅ Server-side filtering complete. Processed {processed_count} emails across {len(filter_stats)} filters.")
+        
+        if filter_stats:
+            log_callback("📊 Filter Application Stats:")
+            # Fetch filter details to show human-readable queries
+            all_filters = fetch_and_parse_filters(cleaner.service)
+            filter_map = {f['id']: f for f in all_filters}
+            
+            for filter_id, count in filter_stats.items():
+                filter_details = filter_map.get(filter_id)
+                query_str = f"'{filter_details['query']}'" if filter_details else f"ID: {filter_id}"
+                log_callback(f"  - Filter {query_str} processed {count} emails.")
+
+        # Determine which labels were applied to exclude them in the next phase
+        applied_labels = set()
+        all_filters = fetch_and_parse_filters(cleaner.service)
+        for filter_data in all_filters:
+            if filter_data['id'] in filter_stats:
+                # Add labels from the action to our set
+                if 'add_labels' in filter_data['action']:
+                    for label_name in filter_data['action']['add_labels']:
+                        applied_labels.add(label_name)
+
+        return stats, list(applied_labels)
+
+    except GmailAPIError as e:
+        log_callback(f"❌ Gmail API Error during server-side filtering: {e}")
+    except Exception as e:
+        log_callback(f"❌ An unexpected error occurred during server-side filtering: {e}")
+        
+    return {"server_side_processed": 0, "filter_stats": {}}, []
+
 
 def setup_logging():
     """Initialize logging for bulk processing."""
@@ -45,232 +94,96 @@ def pause_callback():
     """Check if processing should be paused (always return False for autonomous processing)."""
     return False
 
-def analyze_backlog_first(cleaner, max_analyze=5000):
-    """Analyze email backlog to optimize processing strategy."""
-    print("\n🔍 Analyzing email backlog to optimize processing...")
-    
-    try:
-        # Run backlog analysis
-        analysis = analyze_backlog(
-            cleaner.service, 
-            query="is:unread in:inbox",
-            max_emails=max_analyze
-        )
-        
-        if analysis and analysis['analysis_summary']['total_emails_analyzed'] > 0:
-            # Export analysis for reference
-            export_analysis_report(analysis, "logs/backlog_analysis.json")
-            
-            total_analyzed = analysis['analysis_summary']['total_emails_analyzed']
-            print(f"📊 Analyzed {total_analyzed} emails from backlog")
-            
-            # Display top senders
-            sender_freq = analysis.get('sender_frequency', {})
-            if sender_freq:
-                print("\n📈 Top email senders:")
-                for i, (sender, count) in enumerate(list(sender_freq.items())[:10], 1):
-                    percentage = (count / total_analyzed) * 100
-                    print(f"   {i:2d}. {sender[:50]:50} - {count:4d} emails ({percentage:.1f}%)")
-            
-            # Display suggested batch queries
-            batch_suggestions = analysis.get('suggested_batch_queries', [])
-            if batch_suggestions:
-                print(f"\n💡 Suggested batch processing queries:")
-                for i, query in enumerate(batch_suggestions[:5], 1):
-                    print(f"   {i}. {query}")
-                
-                return batch_suggestions
-            
-        else:
-            print("⚠️  No emails found in backlog analysis")
-            
-    except Exception as e:
-        print(f"⚠️  Backlog analysis failed: {e}")
-    
-    return []
-
-def process_with_strategy(cleaner, batch_suggestions, args):
-    """Process emails using optimized strategy based on backlog analysis."""
-    print("\n🚀 Starting optimized bulk processing...")
-    
-    total_stats = {
-        'total_found': 0,
-        'total_processed': 0,
-        'batch_count': 0,
-        'errors': 0
-    }
-    
-    # Track processed queries to avoid double-processing
-    processed_queries = []
-    
-    start_time = datetime.now()
-    
-    # Process high-volume senders first if we have suggestions
-    if batch_suggestions and not args.skip_analysis:
-        print("\n📦 Phase 1: Processing high-volume senders...")
-        
-        for i, query in enumerate(batch_suggestions[:3], 1):  # Process top 3 suggestions
-            print(f"\n🎯 Processing batch {i}: {query}")
-            
-            try:
-                # Create a targeted query that's still unread
-                full_query = f"is:unread in:inbox {query}"
-                processed_queries.append(query)  # Track this query
-                
-                # Process this specific sender/pattern
-                stats = cleaner.process_email_backlog(
-                    batch_size=args.batch_size,
-                    older_than_days=0,
-                    query_override=full_query,
-                    log_callback=log_callback,
-                    progress_callback=progress_callback,
-                    pause_callback=pause_callback
-                )
-                
-                # Aggregate stats
-                total_stats['total_found'] += stats.get('total_found', 0)
-                total_stats['total_processed'] += stats.get('total_processed', 0)
-                total_stats['batch_count'] += stats.get('batch_count', 0)
-                total_stats['errors'] += stats.get('errors', 0)
-                
-                print(f"   ✅ Batch {i} complete: {stats.get('total_processed', 0)} emails processed")
-                
-            except (GmailAPIError, EmailProcessingError, LLMConnectionError) as e:
-                print(f"   ❌ Batch {i} failed ({e.__class__.__name__}): {e}")
-                total_stats['errors'] += 1
-                continue
-            except Exception as e:
-                print(f"   ❌ Batch {i} failed (unexpected): {e}")
-                total_stats['errors'] += 1
-                continue
-    
-    # Process remaining emails (excluding those already processed in Phase 1)
-    print("\n📦 Phase 2: Processing remaining emails...")
-    
-    try:
-        # Build exclusion query for senders already processed in Phase 1
-        exclusion_query = "is:unread in:inbox"
-        
-        if processed_queries:
-            # Extract sender exclusions from the actually processed queries
-            exclusions = []
-            for query in processed_queries:
-                # Extract sender patterns to exclude
-                if "from:" in query:
-                    # Extract the from: part and negate it
-                    from_part = query.split("from:")[1].split()[0]  # Get first from: value
-                    exclusions.append(f"-from:{from_part}")
-                elif "(" in query and "OR" in query:
-                    # Handle complex queries - try to extract individual senders
-                    # This is a simplified approach, could be enhanced
-                    parts = query.replace("(", "").replace(")", "").split(" OR ")
-                    for part in parts[:2]:  # Limit to avoid overly long queries
-                        if "from:" in part:
-                            from_part = part.strip().split("from:")[1]
-                            exclusions.append(f"-from:{from_part}")
-            
-            if exclusions:
-                exclusion_query += " " + " ".join(exclusions)
-                print(f"   📝 Excluding already processed senders: {len(exclusions)} patterns")
-                print(f"   🔍 Phase 2 query: {exclusion_query}")
-            else:
-                print("   ℹ️  No specific exclusions needed, processing all remaining emails")
-        else:
-            print("   ℹ️  No Phase 1 processing occurred, processing all emails")
-        
-        stats = cleaner.process_email_backlog(
-            batch_size=args.batch_size,
-            older_than_days=0,
-            query_override=exclusion_query,
-            log_callback=log_callback,
-            progress_callback=progress_callback,
-            pause_callback=pause_callback
-        )
-        
-        # Aggregate final stats
-        total_stats['total_found'] += stats.get('total_found', 0)
-        total_stats['total_processed'] += stats.get('total_processed', 0)
-        total_stats['batch_count'] += stats.get('batch_count', 0)
-        total_stats['errors'] += stats.get('errors', 0)
-        
-    except Exception as e:
-        print(f"❌ Phase 2 processing failed: {e}")
-        total_stats['errors'] += 1
-    
-    # Display final statistics
-    end_time = datetime.now()
-    duration = end_time - start_time
-    
-    print("\n" + "=" * 80)
-    print("✅ OPTIMIZED BULK PROCESSING COMPLETE!")
-    print("=" * 80)
-    print(f"⏱️  Total processing time: {duration}")
-    print(f"📊 Total emails found: {total_stats['total_found']}")
-    print(f"✅ Total emails processed: {total_stats['total_processed']}")
-    print(f"📦 Total batches: {total_stats['batch_count']}")
-    print(f"❌ Errors encountered: {total_stats['errors']}")
-    
-    if total_stats['total_processed'] > 0:
-        rate = total_stats['total_processed'] / max(duration.total_seconds(), 1)
-        print(f"⚡ Processing rate: {rate:.2f} emails/second")
-    
-    return total_stats
-
 def main():
     """Main bulk processing function with argument parsing."""
-    parser = argparse.ArgumentParser(description="Bulk Email Processor with Backlog Analysis")
-    parser.add_argument("--batch-size", type=int, default=50, 
-                       help="Batch size for processing (default: 50)")
-    parser.add_argument("--analyze-limit", type=int, default=5000,
-                       help="Number of emails to analyze for optimization (default: 5000)")
-    parser.add_argument("--skip-analysis", action="store_true",
-                       help="Skip backlog analysis and use standard processing")
-    parser.add_argument("--dry-run", action="store_true",
-                       help="Perform analysis only, don't process emails")
+    parser = argparse.ArgumentParser(description="Bulk Email Processor with Server-Side Filtering")
+    parser.add_argument("--batch-size", type=int, default=50,
+                       help="Batch size for LLM processing (default: 50)")
     
     args = parser.parse_args()
     
     logger = setup_logging()
     
     print("=" * 80)
-    print("🚀 Gmail Bulk Email Processor - Enhanced with Backlog Analysis")
+    print("🚀 Gmail Bulk Email Processor - Server-Side Filtering Edition")
     print("=" * 80)
-    print(f"📦 Batch size: {args.batch_size}")
-    print(f"🔍 Analysis limit: {args.analyze_limit}")
-    print(f"🏃 Skip analysis: {args.skip_analysis}")
-    print(f"🧪 Dry run: {args.dry_run}")
+    print(f"📦 LLM Batch size: {args.batch_size}")
     
     # Initialize the Gmail cleaner
     cleaner = GmailLMCleaner()
     
     print("\n📧 Connecting to Gmail...")
     if not cleaner.ensure_gmail_connection():
-        print("❌ Failed to connect to Gmail. Check authentication.")
+        log_callback("❌ Failed to connect to Gmail. Check authentication.")
         return False
     
-    print("✅ Gmail connection established!")
+    log_callback("✅ Gmail connection established!")
     
-    # Get email count first
+    # Get initial email count
     try:
         inbox_label = cleaner.service.users().labels().get(userId='me', id='INBOX').execute()
         total_unread = inbox_label.get('messagesUnread', 0)
-        print(f"📊 Found {total_unread} unread emails in inbox")
+        log_callback(f"📊 Found {total_unread} unread emails in inbox before processing.")
     except Exception as e:
-        print(f"⚠️ Could not get exact count: {e}")
+        log_callback(f"⚠️ Could not get initial email count: {e}")
         total_unread = 0
+
+    start_time = datetime.now()
+
+    # Phase 1: Server-Side Filtering
+    server_stats, applied_labels = run_server_side_filter_pass(cleaner, log_callback)
     
-    # Analyze backlog first unless skipped
-    batch_suggestions = []
-    if not args.skip_analysis:
-        batch_suggestions = analyze_backlog_first(cleaner, args.analyze_limit)
+    # Phase 2: LLM processing for the remainder
+    log_callback("\n🚀 Phase 2: Starting LLM processing for remaining emails...")
     
-    if args.dry_run:
-        print("\n🧪 Dry run complete - no emails were processed")
-        return True
+    # Construct a query to exclude emails that have already been processed by filters
+    exclusion_query = "is:unread in:inbox"
+    if applied_labels:
+        # Create -label:LabelName for each label applied
+        label_exclusions = [f"-label:{label.replace(' ', '-')}" for label in applied_labels]
+        exclusion_query += " " + " ".join(label_exclusions)
+        log_callback(f"🧠 LLM will process emails NOT matching labels: {', '.join(applied_labels)}")
+    else:
+        log_callback("🧠 No labels were applied in Phase 1. LLM will process all unread emails.")
+        
+    log_callback(f"🔍 Using query for LLM processing: {exclusion_query}")
+
+    llm_stats = {}
+    try:
+        llm_stats = cleaner.process_email_backlog(
+            batch_size=args.batch_size,
+            older_than_days=0, # Process all regardless of age
+            query_override=exclusion_query,
+            log_callback=log_callback,
+            progress_callback=progress_callback,
+            pause_callback=pause_callback
+        )
+        log_callback("✅ LLM processing complete.")
+    except (GmailAPIError, EmailProcessingError, LLMConnectionError) as e:
+        log_callback(f"❌ LLM processing failed ({e.__class__.__name__}): {e}")
+    except Exception as e:
+        log_callback(f"❌ An unexpected error occurred during LLM processing: {e}")
+
+    # Final summary
+    end_time = datetime.now()
+    duration = end_time - start_time
     
-    # Process with optimized strategy
-    stats = process_with_strategy(cleaner, batch_suggestions, args)
+    total_server_processed = server_stats.get('server_side_processed', 0)
+    total_llm_processed = llm_stats.get('total_processed', 0)
+    total_processed = total_server_processed + total_llm_processed
+
+    print("\n" + "=" * 80)
+    print("✅ BULK PROCESSING COMPLETE!")
+    print("=" * 80)
+    print(f"⏱️  Total processing time: {duration}")
+    print(f"📊 Total emails processed: {total_processed}")
+    print(f"  - Server-side filters: {total_server_processed}")
+    print(f"  - LLM processing: {total_llm_processed}")
     
+    if total_processed > 0:
+        rate = total_processed / max(duration.total_seconds(), 1)
+        print(f"⚡ Processing rate: {rate:.2f} emails/second")
+
     print(f"\n📝 Detailed logs available in: logs/bulk_processing.log")
     
     # Show final inbox status
