@@ -88,46 +88,118 @@ def exponential_backoff_retry(func, max_retries: int = 3, base_delay: float = 1.
 # OAuth2 Authentication
 # =========================
 
-def get_gmail_service(credentials_path: str = "config/credentials.json", token_path: str = "config/token.json"):
+def get_gmail_service(credentials_path: str = "config/credentials.json", token_path: str = "config/token.json", max_retries: int = 3):
     """
-    Obtain an authenticated Gmail API service object using OAuth2.
+    Obtain an authenticated Gmail API service object using OAuth2 with robust error handling.
 
     Args:
         credentials_path (str): Path to OAuth2 client credentials JSON.
         token_path (str): Path to store/retrieve user token.
+        max_retries (int): Maximum number of authentication retry attempts.
 
     Returns:
         googleapiclient.discovery.Resource: Authenticated Gmail API service.
+
+    Raises:
+        AuthenticationError: If authentication fails after all retries.
 
     Usage Example:
         service = get_gmail_service()
         manager = GmailLabelManager(service)
     """
-    creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    if os.path.exists(token_path):
-        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open(token_path, 'w') as token:
-            token.write(creds.to_json())
-
-    try:
-        service = build('gmail', 'v1', credentials=creds)
-        logger.info("Successfully obtained Gmail API service.")
-        return service
-    except HttpError as err:
-        logger.error(f"An error occurred while building Gmail service: {err}")
-        return None
+    for attempt in range(max_retries):
+        try:
+            creds = None
+            
+            # Load existing credentials if available
+            if os.path.exists(token_path):
+                try:
+                    creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+                except Exception as e:
+                    logger.warning(f"Failed to load token file {token_path}: {e}")
+                    # Delete corrupted token file
+                    try:
+                        os.remove(token_path)
+                        logger.info(f"Removed corrupted token file: {token_path}")
+                    except OSError:
+                        pass
+                    creds = None
+            
+            # Handle invalid or expired credentials
+            if not creds or not creds.valid:
+                if creds and creds.expired and creds.refresh_token:
+                    try:
+                        logger.info("Refreshing expired credentials...")
+                        creds.refresh(Request())
+                        logger.info("Successfully refreshed credentials")
+                    except Exception as refresh_error:
+                        logger.warning(f"Token refresh failed: {refresh_error}")
+                        # Delete the failed token and re-authenticate
+                        if os.path.exists(token_path):
+                            try:
+                                os.remove(token_path)
+                                logger.info(f"Removed failed token file: {token_path}")
+                            except OSError:
+                                pass
+                        creds = None
+                
+                # Perform fresh authentication if needed
+                if not creds:
+                    logger.info("Starting fresh OAuth2 authentication flow...")
+                    if not os.path.exists(credentials_path):
+                        raise FileNotFoundError(f"Credentials file not found: {credentials_path}")
+                    
+                    flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+                    creds = flow.run_local_server(port=0)
+                    logger.info("Successfully completed OAuth2 authentication")
+                
+                # Save the credentials for future use
+                try:
+                    os.makedirs(os.path.dirname(token_path), exist_ok=True)
+                    with open(token_path, 'w') as token:
+                        token.write(creds.to_json())
+                    logger.info(f"Saved credentials to: {token_path}")
+                except Exception as save_error:
+                    logger.warning(f"Failed to save token file: {save_error}")
+            
+            # Build and test the Gmail service
+            service = build('gmail', 'v1', credentials=creds)
+            
+            # Test the connection with a simple API call
+            try:
+                profile = service.users().getProfile(userId='me').execute()
+                logger.info(f"Successfully authenticated Gmail service for: {profile.get('emailAddress', 'unknown')}")
+                return service
+            except HttpError as test_error:
+                logger.warning(f"Gmail service test failed: {test_error}")
+                if test_error.resp.status == 401:
+                    # Unauthorized - delete token and retry
+                    if os.path.exists(token_path):
+                        os.remove(token_path)
+                    raise test_error
+                else:
+                    # Other HTTP errors might be temporary
+                    raise test_error
+                    
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"Gmail authentication attempt {attempt + 1} failed: {e}, retrying...")
+                # Clean up potentially corrupted state
+                if os.path.exists(token_path):
+                    try:
+                        os.remove(token_path)
+                    except OSError:
+                        pass
+                continue
+            else:
+                logger.error(f"Gmail authentication failed after {max_retries} attempts: {e}")
+                # Import here to avoid circular imports
+                from exceptions import AuthenticationError
+                raise AuthenticationError(f"Failed to authenticate with Gmail after {max_retries} attempts: {e}")
+    
+    # This should never be reached, but just in case
+    from exceptions import AuthenticationError
+    raise AuthenticationError("Unexpected authentication failure")
 
 # =========================
 # Label Management

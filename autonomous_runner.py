@@ -7,6 +7,7 @@ import traceback
 from datetime import datetime, timedelta
 
 from log_config import init_logging, get_logger
+from pid_utils import PIDFileManager
 from gmail_lm_cleaner import GmailLMCleaner
 from gmail_api_utils import GmailEmailManager, get_gmail_service
 import audit_tool
@@ -54,18 +55,34 @@ def _retry_wrapper(func, max_retries=3, delay_seconds=5, *args, **kwargs):
 
 def run_batch_analysis(gmail_cleaner, export_dir, settings_path):
     logger = get_logger(__name__)
-    logger.info("Triggering batch analysis (Gemini).")
+    logger.info("Triggering batch analysis (LM Studio).")
     if not gmail_cleaner:
         logger.warning("GmailLMCleaner not initialized. Skipping batch analysis.")
         return False
 
     def _batch_analysis_task():
-        export_path = export_emails_for_analysis(export_dir, gmail_cleaner)
-        if export_path:
-            gemini_output_path = run_gemini_analysis_on_export(export_path, export_dir)
-            if gemini_output_path:
-                run_gemini_config_updater(gemini_output_path, settings_path)
-        return True
+        # Import LM Studio functions
+        from lm_studio_integration import analyze_email_subjects_with_lm_studio, update_config_from_lm_analysis
+        
+        # Run LM Studio analysis using existing exported data or fresh export
+        logger.info("Running LM Studio analysis on email subjects...")
+        analysis_result = analyze_email_subjects_with_lm_studio(use_existing_export=True)
+        
+        if analysis_result:
+            logger.info(f"LM Studio analysis completed with {len(analysis_result)} categorizations")
+            
+            # Update configuration based on analysis results
+            config_updated = update_config_from_lm_analysis(analysis_result, settings_path)
+            
+            if config_updated:
+                logger.info("Configuration successfully updated from LM Studio analysis")
+                return True
+            else:
+                logger.warning("Configuration update failed, but analysis completed")
+                return False
+        else:
+            logger.error("LM Studio analysis failed or returned no results")
+            return False
 
     try:
         return _retry_wrapper(_batch_analysis_task)
@@ -334,10 +351,15 @@ def check_job_prerequisites(job_name, settings, logger):
         tuple: (can_run: bool, reason: str)
     """
     if job_name == "batch_analysis":
-        # Check for Gemini API key
-        gemini_key = os.environ.get('GEMINI_API_KEY')
-        if not gemini_key:
-            return False, "GEMINI_API_KEY environment variable not set"
+        # Check if LM Studio is reachable
+        lm_studio_endpoint = settings.get("api", {}).get("lm_studio", {}).get("endpoint", "http://localhost:1234")
+        try:
+            import requests
+            response = requests.get(f"{lm_studio_endpoint}/v1/models", timeout=5)
+            if response.status_code != 200:
+                return False, f"LM Studio models endpoint check failed: {response.status_code}"
+        except requests.exceptions.RequestException as e:
+            return False, f"LM Studio not reachable for batch analysis: {e}"
         
         # Check export directory exists
         export_dir = settings.get("paths", {}).get("exports", "exports")
@@ -415,8 +437,22 @@ def main():
     log_file = DEFAULT_LOG_FILE
     init_logging(log_dir=log_dir, log_file_name=log_file)
     logger = get_logger(__name__)
-    logger.info("Autonomous runner started.")
+    
+    # Initialize PID file management
+    try:
+        with PIDFileManager(process_name="autonomous_runner") as pid_manager:
+            logger.info("Autonomous runner started with PID file management.")
+            _run_main_loop(settings, logger)
+    except RuntimeError as e:
+        logger.error(f"Failed to start autonomous runner: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error in autonomous runner: {e}")
+        sys.exit(1)
 
+def _run_main_loop(settings, logger):
+    """Main loop logic extracted for PID file management."""
+    
     # Initialize Gmail API service
     gmail_service = None
     try:
@@ -425,19 +461,19 @@ def main():
             logger.info("Gmail API service initialized successfully.")
         else:
             logger.error("Failed to get Gmail API service.")
-            sys.exit(1) # Exit if Gmail service cannot be initialized
+            return
     except AuthenticationError as auth_e:
         auth_e.log_error(logger)
         logger.critical("Gmail authentication failed. Check credentials and token files.")
-        sys.exit(1)
+        return
     except GmailAPIError as api_e:
         api_e.log_error(logger)
         logger.critical("Gmail API initialization failed.")
-        sys.exit(1)
+        return
     except Exception as e:
         logger.error(f"Unexpected error initializing Gmail API service: {e}")
         logger.debug(traceback.format_exc())
-        sys.exit(1)
+        return
 
     # Initialize GmailLMCleaner and GmailEmailManager
     gmail_cleaner = None
@@ -449,15 +485,15 @@ def main():
     except ConfigurationError as config_e:
         config_e.log_error(logger)
         logger.critical("Configuration error during cleaner initialization.")
-        sys.exit(1)
+        return
     except AuthenticationError as auth_e:
         auth_e.log_error(logger)
         logger.critical("Authentication error during cleaner initialization.")
-        sys.exit(1)
+        return
     except Exception as e:
         logger.error(f"Unexpected error initializing GmailLMCleaner or GmailEmailManager: {e}")
         logger.debug(traceback.format_exc())
-        sys.exit(1)
+        return
 
     # Scheduling config
     # Use reasonable cron expressions for the jobs

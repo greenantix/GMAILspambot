@@ -6,58 +6,105 @@
 echo "🛑 Gmail Intelligent Cleaner - Shutting Down"
 echo "============================================"
 
+# Use PID files for graceful shutdown when available
+echo "🔍 Stopping processes using PID files..."
+
+# Function to stop process using PID file with fallback to process name
+stop_process_with_fallback() {
+    local process_name="$1"
+    local script_pattern="$2"
+    
+    # Check if PID file exists
+    if [ -f "pids/${process_name}.pid" ]; then
+        pid=$(cat "pids/${process_name}.pid" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "   Found ${process_name} via PID file (PID: $pid) - stopping gracefully..."
+            kill -TERM "$pid" 2>/dev/null
+            
+            # Wait for graceful shutdown
+            for i in {1..10}; do
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    echo "   ✅ ${process_name} stopped gracefully"
+                    rm -f "pids/${process_name}.pid" 2>/dev/null
+                    return 0
+                fi
+                sleep 1
+            done
+            
+            # Force kill if still running
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "   ⚠️  Force killing ${process_name}..."
+                kill -KILL "$pid" 2>/dev/null
+                sleep 1
+                rm -f "pids/${process_name}.pid" 2>/dev/null
+            fi
+        else
+            echo "   ℹ️  Stale PID file for ${process_name}, cleaning up..."
+            rm -f "pids/${process_name}.pid" 2>/dev/null
+        fi
+    fi
+    
+    # Fallback to process search if PID file method didn't work
+    fallback_pids=$(pgrep -f "$script_pattern" 2>/dev/null)
+    if [ -n "$fallback_pids" ]; then
+        echo "   Found ${process_name} via process search (PID: $fallback_pids) - stopping..."
+        kill -TERM $fallback_pids 2>/dev/null
+        sleep 2
+        
+        # Force kill if still running
+        still_running=$(pgrep -f "$script_pattern" 2>/dev/null)
+        if [ -n "$still_running" ]; then
+            echo "   ⚠️  Force killing remaining ${process_name} processes..."
+            kill -KILL $still_running 2>/dev/null
+            sleep 1
+        fi
+        echo "   ✅ ${process_name} stopped"
+    else
+        echo "   ℹ️  No ${process_name} processes running"
+    fi
+}
+
 # Stop bulk processor first (prevents new LM Studio requests)
 echo "🔍 Stopping bulk processor..."
-bulk_pids=$(pgrep -f "bulk_processor.py")
-if [ -n "$bulk_pids" ]; then
-    echo "   Found bulk processor (PID: $bulk_pids) - stopping..."
-    kill $bulk_pids 2>/dev/null
-    sleep 2
-    # Force kill if still running
-    if pgrep -f "bulk_processor.py" > /dev/null; then
-        killall -9 python3 2>/dev/null || true
-        pkill -9 -f "bulk_processor.py" 2>/dev/null || true
-    fi
-    echo "   ✅ Bulk processor stopped"
-else
-    echo "   ℹ️  No bulk processor running"
-fi
+stop_process_with_fallback "bulk_processor" "bulk_processor.py"
 
-# Find and kill any running gmail_lm_cleaner processes
-echo "🔍 Looking for running Gmail Cleaner processes..."
+# Stop autonomous runner
+echo "🔍 Stopping autonomous runner..."
+stop_process_with_fallback "autonomous_runner" "autonomous_runner.py"
 
-# Get the process IDs
-pids=$(pgrep -f "gmail_lm_cleaner.py")
+# Find and kill any other Gmail cleaner processes
+echo "🔍 Looking for other Gmail Cleaner processes..."
+other_pids=$(pgrep -f "gmail_lm_cleaner.py" 2>/dev/null)
 
-if [ -z "$pids" ]; then
-    echo "ℹ️  No Gmail Cleaner processes found running"
-else
-    echo "🔄 Found Gmail Cleaner processes: $pids"
+if [ -n "$other_pids" ]; then
+    echo "🔄 Found other Gmail Cleaner processes: $other_pids"
     echo "   Sending termination signal..."
     
     # Send SIGTERM first (graceful shutdown)
-    kill $pids 2>/dev/null
+    kill -TERM $other_pids 2>/dev/null
     
     # Wait a moment for graceful shutdown
-    sleep 2
+    sleep 3
     
     # Check if processes are still running
-    still_running=$(pgrep -f "gmail_lm_cleaner.py")
+    still_running=$(pgrep -f "gmail_lm_cleaner.py" 2>/dev/null)
     
     if [ -n "$still_running" ]; then
         echo "⚠️  Processes still running, forcing shutdown..."
-        kill -9 $still_running 2>/dev/null
+        kill -KILL $still_running 2>/dev/null
         sleep 1
     fi
     
     # Final check
-    final_check=$(pgrep -f "gmail_lm_cleaner.py")
+    final_check=$(pgrep -f "gmail_lm_cleaner.py" 2>/dev/null)
     if [ -z "$final_check" ]; then
-        echo "✓ Gmail Cleaner processes stopped successfully"
+        echo "✓ Other Gmail Cleaner processes stopped successfully"
     else
         echo "❌ Some processes may still be running. Try running this script again."
         exit 1
     fi
+else
+    echo "ℹ️  No other Gmail Cleaner processes found running"
 fi
 
 # Clean up LM Studio processes and backlog

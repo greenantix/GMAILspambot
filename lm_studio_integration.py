@@ -7,6 +7,8 @@ Smart model switching for different tasks with automatic loading/unloading
 import json
 import requests
 import time
+import os
+from datetime import datetime
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 from log_config import get_logger
@@ -16,8 +18,9 @@ logger = get_logger(__name__)
 class LMStudioManager:
     """Manages LM Studio models with smart switching for different tasks"""
     
-    def __init__(self, base_url: str = "http://127.0.0.1:1234"):
+    def __init__(self, base_url: str = "http://127.0.0.1:1234", timeout: int = 60):
         self.base_url = base_url
+        self.timeout = timeout
         self.current_model = None
         self.models = {
             # Fast models for email categorization
@@ -47,7 +50,7 @@ class LMStudioManager:
     def is_server_running(self) -> bool:
         """Check if LM Studio server is running"""
         try:
-            response = requests.get(f"{self.base_url}/v1/models", timeout=5)
+            response = requests.get(f"{self.base_url}/v1/models", timeout=self.timeout)
             return response.status_code == 200
         except requests.RequestException:
             return False
@@ -55,7 +58,7 @@ class LMStudioManager:
     def get_loaded_model(self) -> Optional[str]:
         """Get currently loaded model"""
         try:
-            response = requests.get(f"{self.base_url}/v1/models", timeout=5)
+            response = requests.get(f"{self.base_url}/v1/models", timeout=self.timeout)
             if response.status_code == 200:
                 models = response.json()
                 if models.get("data"):
@@ -65,64 +68,87 @@ class LMStudioManager:
         return None
     
     def load_model(self, model_key: str) -> bool:
-        """Load a specific model in LM Studio"""
-        if model_key not in self.models:
-            logger.error(f"Unknown model key: {model_key}")
-            return False
+        """Note: LM Studio API does not support programmatic model loading"""
+        logger.warning("LM Studio API does not support remote model loading")
+        logger.info("Models must be loaded manually in the LM Studio interface")
+        if model_key in self.models:
+            logger.info(f"To optimize performance, please load: {self.models[model_key]['name']}")
+        return False
+    
+    def detect_current_model_capability(self) -> str:
+        """Detect what type of model is currently loaded based on its ID"""
+        current_model_id = self.get_loaded_model()
+        if not current_model_id:
+            return "unknown"
         
-        model_info = self.models[model_key]
-        model_name = model_info["name"]
+        # Map loaded model to capability level
+        model_id_lower = current_model_id.lower()
         
-        # Check if model is already loaded
-        current = self.get_loaded_model()
-        if current and model_name.lower() in current.lower():
-            logger.info(f"Model {model_name} already loaded")
-            self.current_model = model_key
-            return True
-        
-        logger.info(f"Loading model: {model_name} for {model_info['use_case']}")
-        
-        # Note: LM Studio API doesn't have direct model loading endpoint
-        # This would need manual loading in LM Studio UI or custom implementation
-        # For now, we assume the correct model is loaded
-        
-        self.current_model = model_key
-        return True
+        if any(fast_term in model_id_lower for fast_term in ["phi", "mini", "small"]):
+            return "fast"
+        elif any(large_term in model_id_lower for large_term in ["70b", "large", "big"]):
+            return "large"
+        elif any(code_term in model_id_lower for code_term in ["code", "coder", "coding"]):
+            return "coding"
+        else:
+            return "medium"  # Default assumption
     
     def generate_completion(self, prompt: str, max_tokens: int = 1000, 
-                          temperature: float = 0.3, model_key: str = "medium") -> Optional[str]:
-        """Generate completion using LM Studio"""
+                          temperature: float = 0.3, preferred_model: str = "medium") -> Optional[str]:
+        """Generate completion using currently loaded model (Smart Selection Strategy)"""
         
         if not self.is_server_running():
             logger.error("LM Studio server is not running")
             return None
         
-        # Ensure correct model is loaded
-        if not self.load_model(model_key):
-            logger.error(f"Failed to load model: {model_key}")
+        # Use smart selection: work with whatever model is currently loaded
+        current_model_id = self.get_loaded_model()
+        if not current_model_id:
+            logger.error("No model currently loaded in LM Studio")
+            logger.info("Please load a model manually in LM Studio interface")
             return None
+        
+        # Detect model capability and adjust parameters accordingly
+        detected_capability = self.detect_current_model_capability()
+        logger.info(f"Using loaded model: {current_model_id} (detected as '{detected_capability}' capability)")
+        
+        # Adjust parameters based on detected model capability
+        adjusted_max_tokens = max_tokens
+        adjusted_temperature = temperature
+        
+        if detected_capability == "fast":
+            # Fast models: reduce tokens for quicker responses
+            adjusted_max_tokens = min(max_tokens, 500)
+            logger.debug("Adjusted for fast model: reduced max_tokens")
+        elif detected_capability == "large":
+            # Large models: can handle more complexity
+            adjusted_max_tokens = min(max_tokens, 2000)
+            adjusted_temperature = max(temperature, 0.1)  # Slightly higher temp for creativity
+            logger.debug("Adjusted for large model: increased max_tokens")
         
         try:
             payload = {
-                "model": self.models[model_key]["name"],
+                "model": current_model_id,  # Use the actual loaded model ID
                 "messages": [
                     {"role": "user", "content": prompt}
                 ],
-                "max_tokens": max_tokens,
-                "temperature": temperature,
+                "max_tokens": adjusted_max_tokens,
+                "temperature": adjusted_temperature,
                 "stream": False
             }
             
             response = requests.post(
                 f"{self.base_url}/v1/chat/completions",
                 json=payload,
-                timeout=60
+                timeout=self.timeout
             )
             
             if response.status_code == 200:
                 result = response.json()
                 if result.get("choices") and len(result["choices"]) > 0:
-                    return result["choices"][0]["message"]["content"].strip()
+                    content = result["choices"][0]["message"]["content"].strip()
+                    logger.debug(f"Generated {len(content)} characters using {detected_capability} model")
+                    return content
             else:
                 logger.error(f"LM Studio API error: {response.status_code} - {response.text}")
                 
@@ -408,29 +434,101 @@ def analyze_email_subjects_with_lm_studio(use_existing_export: bool = False) -> 
     logger.info("LM Studio analysis completed successfully")
     return result
 
-def update_config_from_lm_analysis(analysis_result: Dict) -> bool:
-    """Update system configuration based on LM Studio analysis"""
+def update_config_from_lm_analysis(analysis_result: Dict, settings_path: str = "config/settings.json") -> bool:
+    """Update system configuration based on LM Studio analysis results"""
     
     if not analysis_result:
+        logger.warning("No analysis result provided for configuration update")
         return False
     
     try:
-        # This would integrate with the existing settings update system
         logger.info("Applying LM Studio analysis results to configuration")
         
-        # Extract suggestions and apply them
-        analysis = analysis_result.get("analysis", {})
-        suggestions = analysis.get("recommendations", {})
+        # Load current settings
+        settings = {}
+        if os.path.exists(settings_path):
+            with open(settings_path, 'r') as f:
+                settings = json.load(f)
         
-        if suggestions:
-            logger.info(f"Applying {len(suggestions)} optimization suggestions")
-            # Apply filter suggestions, categorization rules, etc.
+        # Extract categorization results and suggestions
+        categorizations = analysis_result.get("categorizations", [])
+        metadata = analysis_result.get("metadata", {})
+        
+        if not categorizations:
+            logger.warning("No categorizations found in analysis result")
+            return False
+        
+        # Analyze patterns and update settings
+        updates_made = False
+        
+        # Update sender patterns based on categorizations
+        sender_patterns = {}
+        category_counts = {}
+        
+        for item in categorizations:
+            category = item.get("category", "UNKNOWN")
+            sender = item.get("sender", "")
+            
+            # Count categories
+            category_counts[category] = category_counts.get(category, 0) + 1
+            
+            # Extract domain from sender
+            if "@" in sender:
+                domain = sender.split("@")[-1].lower()
+                if domain not in sender_patterns:
+                    sender_patterns[domain] = {}
+                sender_patterns[domain][category] = sender_patterns[domain].get(category, 0) + 1
+        
+        # Find strong sender patterns (domain consistently categorized the same way)
+        strong_patterns = {}
+        for domain, categories in sender_patterns.items():
+            if len(categories) == 1:  # Only one category for this domain
+                category = list(categories.keys())[0]
+                count = categories[category]
+                if count >= 3:  # At least 3 emails from this domain
+                    strong_patterns[domain] = category
+        
+        # Update settings with new patterns
+        if strong_patterns:
+            if "sender_rules" not in settings:
+                settings["sender_rules"] = {}
+            
+            for domain, category in strong_patterns.items():
+                settings["sender_rules"][domain] = {
+                    "category": category,
+                    "confidence": 0.9,
+                    "source": "lm_studio_analysis",
+                    "created": datetime.now().isoformat()
+                }
+                logger.info(f"Added sender rule: {domain} -> {category}")
+                updates_made = True
+        
+        # Update category statistics
+        if category_counts:
+            settings["last_analysis"] = {
+                "timestamp": datetime.now().isoformat(),
+                "model_used": metadata.get("model_used", "unknown"),
+                "emails_analyzed": metadata.get("emails_analyzed", 0),
+                "category_distribution": category_counts
+            }
+            updates_made = True
+        
+        # Save updated settings
+        if updates_made:
+            os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+            with open(settings_path, 'w') as f:
+                json.dump(settings, f, indent=2)
+            logger.info(f"Updated configuration with {len(strong_patterns)} new sender rules")
+            return True
+        else:
+            logger.info("No configuration updates needed based on analysis")
             return True
         
     except Exception as e:
         logger.error(f"Failed to update config from LM analysis: {e}")
-    
-    return False
+        import traceback
+        logger.debug(traceback.format_exc())
+        return False
 def apply_lm_studio_suggestions(suggestions: Dict) -> bool:
     """Applies suggestions from LM Studio analysis."""
     logger.info("Applying LM Studio suggestions")

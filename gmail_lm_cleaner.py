@@ -760,62 +760,36 @@ class GmailLMCleaner:
             json.dump(self.settings, f, indent=2)
         
     def setup_gmail_service(self):
-        """Authenticate and create Gmail service instance with auto-reconnection."""
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                creds = None
+        """Authenticate and create Gmail service instance using unified authentication."""
+        try:
+            # Use the unified authentication function from gmail_api_utils
+            self.service = get_gmail_service(
+                credentials_path=self.credentials_file,
+                token_path=self.token_file,
+                max_retries=3
+            )
+            
+            # Additional service setup can go here if needed
+            if hasattr(self, 'logger'):
+                self.logger.info("Gmail service setup completed using unified authentication")
                 
-                if os.path.exists(self.token_file):
-                    creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
-                
-                if not creds or not creds.valid:
-                    if creds and creds.expired and creds.refresh_token:
-                        try:
-                            creds.refresh(Request())
-                        except Exception as e:
-                            if hasattr(self, 'logger'):
-                                self.logger.warning(f"Token refresh failed: {e}, re-authenticating...")
-                            # Delete expired token and re-authenticate
-                            if os.path.exists(self.token_file):
-                                os.remove(self.token_file)
-                            creds = None
-                    
-                    if not creds:
-                        flow = InstalledAppFlow.from_client_secrets_file(
-                            self.credentials_file, SCOPES)
-                        creds = flow.run_local_server(port=0)
-                    
-                    with open(self.token_file, 'w') as token:
-                        token.write(creds.to_json())
-                
-                self.service = build('gmail', 'v1', credentials=creds)
-                
-                # Test the connection
-                try:
-                    self.service.users().getProfile(userId='me').execute()
-                    if hasattr(self, 'logger'):
-                        self.logger.info("Gmail connection established successfully")
-                    return  # Success, exit retry loop
-                except Exception as e:
-                    if hasattr(self, 'logger'):
-                        self.logger.warning(f"Gmail connection test failed: {e}")
-                    raise e
-                    
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    if hasattr(self, 'logger'):
-                        self.logger.warning(f"Gmail setup attempt {attempt + 1} failed: {e}, retrying...")
-                    # Clean up and retry
-                    if os.path.exists(self.token_file):
-                        os.remove(self.token_file)
-                else:
-                    if hasattr(self, 'logger'):
-                        self.logger.error(f"Gmail setup failed after {max_retries} attempts: {e}")
-                    raise e
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Gmail service setup failed: {e}")
+            raise e
 
     def ensure_gmail_connection(self):
         """Ensure Gmail connection is active, reconnect if needed."""
+        if not self.service:
+            # No service exists, set it up
+            try:
+                self.setup_gmail_service()
+                return True
+            except Exception as e:
+                if hasattr(self, 'logger'):
+                    self.logger.error(f"Failed to setup Gmail service: {e}")
+                return False
+        
         try:
             # Quick test to see if connection is alive
             self.service.users().getProfile(userId='me').execute()

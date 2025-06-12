@@ -15,6 +15,7 @@ from gmail_lm_cleaner import GmailLMCleaner
 from log_config import init_logging
 from tools.filter_harvester import apply_existing_filters_to_backlog, fetch_and_parse_filters
 from exceptions import GmailAPIError, EmailProcessingError, LLMConnectionError
+from pid_utils import PIDFileManager
 
 
 def run_server_side_filter_pass(cleaner, log_callback):
@@ -109,6 +110,18 @@ def main():
     print("=" * 80)
     print(f"📦 LLM Batch size: {args.batch_size}")
     
+    # Initialize PID file management
+    try:
+        with PIDFileManager(process_name="bulk_processor") as pid_manager:
+            log_callback("Bulk processor started with PID file management.")
+            return _run_bulk_processing(args.batch_size, logger)
+    except RuntimeError as e:
+        log_callback(f"❌ Failed to start bulk processor: {e}")
+        return False
+
+def _run_bulk_processing(batch_size, logger):
+    """Main bulk processing logic extracted for PID file management."""
+    
     # Initialize the Gmail cleaner
     cleaner = GmailLMCleaner()
     
@@ -151,7 +164,7 @@ def main():
     llm_stats = {}
     try:
         llm_stats = cleaner.process_email_backlog(
-            batch_size=args.batch_size,
+            batch_size=batch_size,
             older_than_days=0, # Process all regardless of age
             query_override=exclusion_query,
             log_callback=log_callback,
