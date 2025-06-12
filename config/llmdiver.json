@@ -1,0 +1,41 @@
+{
+  "daemon": {
+    "enabled": true,
+    "port": 8080,
+    "host": "localhost",
+    "log_level": "INFO",
+    "watch_debounce": 5,
+    "max_concurrent_analyses": 3
+  },
+  "repositories": [
+    {
+      "name": "GMAILspambot",
+      "path": "/home/greenantix/AI/GMAILspambot",
+      "auto_commit": true,
+      "auto_push": false,
+      "analysis_triggers": ["*.py", "*.js", "*.sh"],
+      "commit_threshold": 10
+    }
+  ],
+  "git_automation": {
+    "enabled": true,
+    "commit_message_template": "🤖 LLMdiver: {summary}\n\n{details}",
+    "auto_push": false,
+    "documentation_update": true,
+    "branch_protection": ["main", "master"]
+  },
+  "llm_integration": {
+    "model": "meta-llama-3.1-8b-instruct",
+    "url": "http://127.0.0.1:1234/v1/chat/completions",
+    "temperature": 0.3,
+    "max_tokens": 4096
+  },
+  "repomix": {
+    "style": "markdown",
+    "compress": true,
+    "remove_comments": true,
+    "include_patterns": ["*.py", "*.js", "*.ts"],
+    "ignore_patterns": ["*.md", "*.log"],
+    "use_gitignore": false
+  }
+}
