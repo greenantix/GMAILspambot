@@ -82,14 +82,11 @@ Respond with ONLY valid JSON, no other text or explanation."""
 # Settings configuration
 DEFAULT_SETTINGS = {
     "important_keywords": [
-        "security alert", "account suspended", "verify your account", "confirm your identity",
-        "password reset", "login attempt", "suspicious activity", "unauthorized access",
-        "fraud alert", "payment failed", "invoice due", "tax notice", "bank statement",
-        "urgent action required", "account expires", "verification code"
+        # Start with minimal, highly specific examples - Gemini will populate more
+        "security alert", "account suspended", "fraud alert", "payment failed"
     ],
     "important_senders": [
-        "security@", "alerts@", "fraud@", "admin@",
-        "billing@", "accounts@", "statements@"
+        # Start empty to avoid false positives - let Gemini suggest specific patterns
     ],
     "promotional_keywords": [
         "sale", "discount", "offer", "deal", "coupon", "promo", "marketing",
@@ -2728,19 +2725,36 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                     logger.error(f"Category rules update failed: {e}")
             
             # Update important keywords and senders
+            settings_updated = False
             if 'important_keywords' in rules:
                 self.settings['important_keywords'] = rules['important_keywords']
+                settings_updated = True
+                if log_callback:
+                    log_callback(f"✅ Updated important keywords ({len(rules['important_keywords'])} items)")
             
             if 'important_senders' in rules:
                 self.settings['important_senders'] = rules['important_senders']
+                settings_updated = True
+                if log_callback:
+                    log_callback(f"✅ Updated important senders ({len(rules['important_senders'])} items)")
             
             # Store category rules for advanced filtering in settings
             if 'category_rules' in rules:
                 self.settings['category_rules'] = rules['category_rules']
+                settings_updated = True
             
             # Update auto-delete list
             if 'auto_delete_senders' in rules:
                 self.settings['auto_delete_senders'] = rules['auto_delete_senders']
+                settings_updated = True
+                if log_callback:
+                    log_callback(f"✅ Updated auto-delete senders ({len(rules['auto_delete_senders'])} items)")
+            
+            # Save settings to file so changes persist
+            if settings_updated:
+                self.save_settings()
+                if log_callback:
+                    log_callback("💾 Settings saved to file")
             
             # Update label action mappings in settings
             if 'category_rules' in rules:
