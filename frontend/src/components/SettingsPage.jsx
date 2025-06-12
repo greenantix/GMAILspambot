@@ -11,10 +11,15 @@ const SettingsPage = () => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [activeTab, setActiveTab] = useState('general');
-  const [geminiLoading, setGeminiLoading] = useState(false);
+  const [lmStudioLoading, setLmStudioLoading] = useState(false);
+  const [lmStudioStatus, setLmStudioStatus] = useState(null);
+  const [lmStudioModels, setLmStudioModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('');
 
   useEffect(() => {
     loadSettings();
+    fetchLmStudioStatus();
+    fetchLmStudioModels();
   }, []);
 
   const loadSettings = async () => {
@@ -88,24 +93,53 @@ const SettingsPage = () => {
     event.target.value = '';
   };
 
-  const runGeminiAnalysis = async () => {
+  const fetchLmStudioStatus = async () => {
     try {
-      setGeminiLoading(true);
-      const response = await apiService.post('/gemini/analyze', {
+      const response = await apiService.get('/lmstudio/status');
+      setLmStudioStatus(response.data);
+    } catch (err) {
+      setLmStudioStatus({ status: 'not_running' });
+    }
+  };
+
+  const fetchLmStudioModels = async () => {
+    try {
+      const response = await apiService.get('/lmstudio/models');
+      setLmStudioModels(response.data);
+      // Set default model if not already set
+      if (!selectedModel && response.data.medium) {
+        setSelectedModel('medium');
+      }
+    } catch (err) {
+      setError('Failed to fetch LM Studio models');
+    }
+  };
+
+  const runLmStudioAnalysis = async () => {
+    try {
+      setLmStudioLoading(true);
+      const response = await apiService.post('/lmstudio/analyze', {
         use_existing_export: true
       });
       
-      if (response.data.status === 'success') {
-        setSuccess('Gemini analysis completed successfully');
-        // Optionally reload settings if they were updated
-        loadSettings();
-      } else {
-        setError('Gemini analysis failed');
-      }
+      setSuccess('LM Studio analysis completed successfully');
+      // Optionally, you can handle the results here
+      
     } catch (err) {
-      setError(handleApiError(err, 'Gemini analysis failed'));
+      setError(handleApiError(err, 'LM Studio analysis failed'));
     } finally {
-      setGeminiLoading(false);
+      setLmStudioLoading(false);
+    }
+  };
+
+  const switchLmStudioModel = async (modelKey) => {
+    try {
+      await apiService.post('/lmstudio/switch-model', { model_key: modelKey });
+      setSelectedModel(modelKey);
+      fetchLmStudioStatus(); // Refresh status after switching
+      setSuccess(`Switched to ${modelKey} model`);
+    } catch (err) {
+      setError(`Failed to switch to ${modelKey} model`);
     }
   };
 
@@ -255,11 +289,15 @@ const SettingsPage = () => {
         )}
         
         {activeTab === 'ai' && (
-          <AISettings 
-            settings={settings} 
+          <LMStudioSettings
+            settings={settings}
             updateSetting={updateSetting}
-            runGeminiAnalysis={runGeminiAnalysis}
-            geminiLoading={geminiLoading}
+            runAnalysis={runLmStudioAnalysis}
+            loading={lmStudioLoading}
+            status={lmStudioStatus}
+            models={lmStudioModels}
+            selectedModel={selectedModel}
+            switchModel={switchLmStudioModel}
           />
         )}
         
@@ -316,20 +354,77 @@ const GeneralSettings = ({ settings, updateSetting }) => (
   </Card>
 );
 
-const AISettings = ({ settings, updateSetting, runGeminiAnalysis, geminiLoading }) => (
+const LMStudioSettings = ({
+  settings,
+  updateSetting,
+  runAnalysis,
+  loading,
+  status,
+  models,
+  selectedModel,
+  switchModel,
+}) => (
   <div className="space-y-6">
     <Card>
-      <h3 className="text-lg font-semibold text-white mb-4">Gemini AI Analysis</h3>
+      <h3 className="text-lg font-semibold text-white mb-4">LM Studio Control</h3>
       <div className="space-y-4">
-        <p className="text-gray-300 text-sm">
-          Use Google's Gemini AI to analyze email patterns and suggest optimizations.
-        </p>
-        <Button 
-          onClick={runGeminiAnalysis}
-          disabled={geminiLoading}
+        <div className="flex items-center justify-between">
+          <span className="text-gray-300">Server Status:</span>
+          {status ? (
+            <div className={`flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+              status.status === 'running' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'
+            }`}>
+              <Icon name={status.status === 'running' ? 'checkCircle' : 'alertCircle'} className="mr-1" size={14} />
+              {status.status === 'running' ? `Running (Model: ${status.loaded_model || 'Unknown'})` : 'Not Running'}
+            </div>
+          ) : (
+            <span className="text-gray-400">Loading...</span>
+          )}
+        </div>
+const ModelPerformanceMetrics = () => (
+  <Card>
+    <h3 className="text-lg font-semibold text-white mb-4">Model Performance</h3>
+    <div className="space-y-2 text-sm text-gray-300">
+      <div className="flex justify-between">
+        <span>Response Time:</span>
+        <span className="font-medium text-white">N/A</span>
+      </div>
+      <div className="flex justify-between">
+        <span>Tokens per Second:</span>
+        <span className="font-medium text-white">N/A</span>
+      </div>
+      <div className="flex justify-between">
+        <span>Last Analysis Duration:</span>
+        <span className="font-medium text-white">N/A</span>
+      </div>
+    </div>
+  </Card>
+);
+
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-2">
+            Active Model
+          </label>
+          <select
+            value={selectedModel}
+            onChange={(e) => switchModel(e.target.value)}
+            className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white"
+            disabled={!status || status.status !== 'running'}
+          >
+            {Object.entries(models).map(([key, model]) => (
+              <option key={key} value={key}>
+                {model.name} ({key})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <Button
+          onClick={runAnalysis}
+          disabled={loading || !status || status.status !== 'running'}
           className="w-full"
         >
-          {geminiLoading ? (
+          {loading ? (
             <>
               <Icon name="loader" className="animate-spin mr-2" />
               Running Analysis...
@@ -337,7 +432,7 @@ const AISettings = ({ settings, updateSetting, runGeminiAnalysis, geminiLoading 
           ) : (
             <>
               <Icon name="brain" className="mr-2" />
-              Run Gemini Analysis
+              Run LM Studio Analysis
             </>
           )}
         </Button>

@@ -22,6 +22,8 @@ Requirements:
 import os
 import json
 from flask import Flask, jsonify
+from flask import request
+from lm_studio_integration import lm_studio
 from log_config import init_logging, get_logger
 from cron_utils import CronScheduler, DEFAULT_STATE_FILE
 from datetime import datetime
@@ -132,8 +134,87 @@ def status():
 @app.errorhandler(Exception)
 def handle_exception(e):
     logger.error(f"Unhandled exception: {e}\n{traceback.format_exc()}")
-    return jsonify({"status": "error", "message": str(e)}), 500
+# --- LM Studio Integration Endpoints ---
 
+@app.route("/api/lmstudio/status", methods=["GET"])
+def lm_studio_status():
+    """Check the status of the LM Studio server."""
+    logger.info("LM Studio status requested")
+    if lm_studio.is_server_running():
+        loaded_model = lm_studio.get_loaded_model()
+        return jsonify({
+            "status": "running",
+            "loaded_model": loaded_model
+        }), 200
+    else:
+        return jsonify({"status": "not_running"}), 503
+
+@app.route("/api/lmstudio/models", methods=["GET"])
+def lm_studio_models():
+    """Get the list of available models."""
+    logger.info("LM Studio models list requested")
+    return jsonify(lm_studio.models), 200
+
+@app.route("/api/lmstudio/analyze", methods=["POST"])
+def lm_studio_analyze():
+    """
+    Trigger an email analysis using LM Studio.
+    Expects a JSON payload with 'use_existing_export' (boolean).
+    """
+    logger.info("LM Studio analysis requested")
+    data = request.get_json()
+    use_existing_export = data.get("use_existing_export", False) if data else False
+    
+    # This is a long-running task, so we should run it in the background
+    # For now, we'll run it synchronously for simplicity
+    from lm_studio_integration import analyze_email_subjects_with_lm_studio
+    result = analyze_email_subjects_with_lm_studio(use_existing_export)
+    
+    if result:
+        return jsonify(result), 200
+    else:
+        return jsonify({"error": "Analysis failed"}), 500
+    return jsonify({"status": "error", "message": str(e)}), 500
+@app.route("/api/lmstudio/apply-suggestions", methods=["POST"])
+def lm_studio_apply_suggestions():
+    """
+    Apply suggestions from an LM Studio analysis.
+    Expects a JSON payload with a 'suggestions' object.
+    """
+    logger.info("LM Studio apply suggestions requested")
+    data = request.get_json()
+    suggestions = data.get("suggestions") if data else None
+    
+    if not suggestions:
+        return jsonify({"error": "No suggestions provided"}), 400
+        
+    from lm_studio_integration import apply_lm_studio_suggestions
+    success = apply_lm_studio_suggestions(suggestions)
+    
+    if success:
+        return jsonify({"status": "suggestions_applied"}), 200
+    else:
+        return jsonify({"error": "Failed to apply suggestions"}), 500
+
+@app.route("/api/lmstudio/switch-model", methods=["POST"])
+def lm_studio_switch_model():
+    """
+    Switch the model used by LM Studio.
+    Expects a JSON payload with a 'model_key' string.
+    """
+    logger.info("LM Studio switch model requested")
+    data = request.get_json()
+    model_key = data.get("model_key") if data else None
+
+    if not model_key:
+        return jsonify({"error": "No model_key provided"}), 400
+
+    success = lm_studio.load_model(model_key)
+
+    if success:
+        return jsonify({"status": f"model_switched_to_{model_key}"}), 200
+    else:
+        return jsonify({"error": f"Failed to switch model to {model_key}"}), 500
 # --- Documentation endpoint ---
 @app.route("/", methods=["GET"])
 def docs():
@@ -142,7 +223,7 @@ def docs():
     """
     doc = {
         "service": "health_check",
-        "description": "Health and status endpoints for system/service monitoring.",
+        "description": "Health, status, and LM Studio integration endpoints.",
         "endpoints": {
             "/health": {
                 "method": "GET",
@@ -151,6 +232,35 @@ def docs():
             "/status": {
                 "method": "GET",
                 "description": "Returns system and service status, including cron job state and error counts."
+            },
+            "/api/lmstudio/status": {
+                "method": "GET",
+                "description": "Check the status of the LM Studio server."
+            },
+            "/api/lmstudio/models": {
+                "method": "GET",
+                "description": "Get the list of available models."
+            },
+            "/api/lmstudio/analyze": {
+                "method": "POST",
+                "description": "Trigger an email analysis using LM Studio.",
+                "payload": {
+                    "use_existing_export": "boolean (optional)"
+                }
+            },
+            "/api/lmstudio/apply-suggestions": {
+                "method": "POST",
+                "description": "Apply suggestions from an LM Studio analysis.",
+                "payload": {
+                    "suggestions": "object"
+                }
+            },
+            "/api/lmstudio/switch-model": {
+                "method": "POST",
+                "description": "Switch the model used by LM Studio.",
+                "payload": {
+                    "model_key": "string"
+                }
             }
         },
         "usage": [
