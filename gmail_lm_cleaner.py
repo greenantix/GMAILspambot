@@ -3159,6 +3159,97 @@ Best regards
 
         if log_callback:
             log_callback("✅ Auto-evolution process complete.")
+
+    def analyze_and_suggest_rules(self, log_callback=None):
+        """
+        Analyze recent email patterns and suggest new rules based on high-volume senders.
+        Returns a list of rule suggestions for the user to approve.
+        """
+        if log_callback:
+            log_callback("🔍 Analyzing email patterns for rule suggestions...")
+        
+        try:
+            # Import the backlog analyzer
+            from tools.backlog_analyzer import analyze_backlog
+            
+            # Analyze recent unread emails to find patterns
+            analysis_report = analyze_backlog(
+                self.service, 
+                query="is:unread", 
+                max_emails=1000  # Analyze up to 1000 recent emails
+            )
+            
+            sender_frequency = analysis_report.get('sender_frequency', {})
+            total_analyzed = analysis_report.get('analysis_summary', {}).get('total_emails_analyzed', 0)
+            
+            if log_callback:
+                log_callback(f"📊 Analyzed {total_analyzed} emails, found {len(sender_frequency)} unique senders")
+            
+            # Generate rule suggestions based on high-volume senders
+            suggestions = []
+            for sender, count in sender_frequency.items():
+                # Suggest rules for senders with 10+ emails
+                if count >= 10:
+                    # Try to categorize the sender based on domain/patterns
+                    suggested_category = self._suggest_category_for_sender(sender)
+                    if suggested_category:
+                        suggestions.append({
+                            'type': 'sender_rule',
+                            'sender': sender,
+                            'email_count': count,
+                            'suggested_category': suggested_category,
+                            'confidence': min(0.9, 0.5 + (count * 0.02)),  # Higher confidence for more emails
+                            'description': f"Add '{sender}' to {suggested_category} rules ({count} emails found)"
+                        })
+            
+            # Sort suggestions by email count (highest first)
+            suggestions.sort(key=lambda x: x['email_count'], reverse=True)
+            
+            if log_callback:
+                log_callback(f"💡 Generated {len(suggestions)} rule suggestions")
+            
+            return suggestions[:10]  # Return top 10 suggestions
+            
+        except Exception as e:
+            if log_callback:
+                log_callback(f"❌ Error analyzing patterns: {e}")
+            self.logger.error(f"Error in analyze_and_suggest_rules: {e}")
+            return []
+    
+    def _suggest_category_for_sender(self, sender_email):
+        """
+        Suggest an appropriate category for a sender based on email patterns.
+        """
+        sender_lower = sender_email.lower()
+        
+        # Newsletter patterns
+        if any(keyword in sender_lower for keyword in ['newsletter', 'news@', 'updates@', 'info@', 'marketing@', 'noreply@']):
+            return 'NEWSLETTERS'
+        
+        # Shopping patterns  
+        elif any(keyword in sender_lower for keyword in ['orders@', 'shop', 'store', 'retail', 'shipping@', 'sales@']):
+            return 'SHOPPING'
+        
+        # Bills/Finance patterns
+        elif any(keyword in sender_lower for keyword in ['billing@', 'invoice', 'payment', 'statement', 'account@', 'finance@']):
+            return 'BILLS'
+        
+        # Social patterns
+        elif any(keyword in sender_lower for keyword in ['notification', 'facebook', 'twitter', 'linkedin', 'instagram', 'social']):
+            return 'SOCIAL'
+        
+        # Check domain patterns
+        domain = sender_email.split('@')[-1] if '@' in sender_email else ''
+        if domain:
+            if any(term in domain for term in ['bank', 'credit', 'finance', 'insurance']):
+                return 'BILLS'
+            elif any(term in domain for term in ['shop', 'store', 'retail', 'amazon', 'ebay']):
+                return 'SHOPPING'
+            elif any(term in domain for term in ['news', 'newsletter', 'blog', 'media']):
+                return 'NEWSLETTERS'
+        
+        # Default to NEWSLETTERS for high-volume automated senders
+        return 'NEWSLETTERS' if 'noreply' in sender_lower else None
  
 class GmailCleanerGUI:
     def __init__(self):
@@ -5040,6 +5131,7 @@ Debug Information:
         
         ttk.Button(control_frame, text="Refresh Analytics", command=self.refresh_analytics).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Export Analytics Report", command=self.export_analytics_report).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Get Rule Suggestions", command=self.show_rule_suggestions).pack(side=tk.LEFT, padx=5)
         
         # Category Distribution
         dist_frame = ttk.LabelFrame(scrollable_frame, text="Category Distribution", padding=10)
@@ -5618,6 +5710,186 @@ Debug Information:
         except Exception as e:
             messagebox.showerror("Export Failed", f"Failed to export analytics report:\n{e}")
             self.log(f"❌ Analytics export failed: {e}")
+    
+    def show_rule_suggestions(self):
+        """Show rule suggestions dialog based on backlog analysis."""
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
+            return
+        
+        # Show progress dialog while analyzing
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("Analyzing Email Patterns")
+        progress_window.geometry("400x150")
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+        
+        ttk.Label(progress_window, text="Analyzing your email patterns...").pack(pady=20)
+        progress_bar = ttk.Progressbar(progress_window, mode='indeterminate')
+        progress_bar.pack(pady=10)
+        progress_bar.start()
+        
+        status_label = ttk.Label(progress_window, text="Starting analysis...")
+        status_label.pack(pady=10)
+        
+        def update_status(message):
+            status_label.config(text=message)
+            progress_window.update()
+        
+        def analyze_thread():
+            try:
+                suggestions = self.cleaner.analyze_and_suggest_rules(log_callback=update_status)
+                
+                # Close progress window and show suggestions
+                progress_window.destroy()
+                
+                if suggestions:
+                    self.show_rule_suggestion_dialog(suggestions)
+                else:
+                    messagebox.showinfo("No Suggestions", "No rule suggestions found. Your email patterns look good!")
+                    
+            except Exception as e:
+                progress_window.destroy()
+                messagebox.showerror("Analysis Error", f"Failed to analyze email patterns:\n{e}")
+                self.log(f"❌ Rule suggestion analysis failed: {e}")
+        
+        # Start analysis in a separate thread
+        threading.Thread(target=analyze_thread, daemon=True).start()
+    
+    def show_rule_suggestion_dialog(self, suggestions):
+        """Show dialog with rule suggestions for user approval."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Rule Suggestions")
+        dialog.geometry("700x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Title
+        ttk.Label(main_frame, text="📋 Suggested Rules Based on Email Analysis", 
+                 font=('TkDefaultFont', 12, 'bold')).pack(pady=(0, 10))
+        
+        ttk.Label(main_frame, text="We found high-volume senders that could benefit from automatic rules:").pack(anchor=tk.W)
+        
+        # Scrollable frame for suggestions
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Add suggestions with checkboxes
+        selected_suggestions = []
+        
+        for i, suggestion in enumerate(suggestions):
+            suggestion_frame = ttk.LabelFrame(scrollable_frame, text=f"Suggestion {i+1}", padding=10)
+            suggestion_frame.pack(fill=tk.X, padx=5, pady=5)
+            
+            var = tk.BooleanVar(value=True)  # Default to selected
+            selected_suggestions.append((var, suggestion))
+            
+            # Checkbox and description
+            cb_frame = ttk.Frame(suggestion_frame)
+            cb_frame.pack(fill=tk.X)
+            
+            ttk.Checkbutton(cb_frame, variable=var).pack(side=tk.LEFT)
+            ttk.Label(cb_frame, text=suggestion['description'], font=('TkDefaultFont', 10, 'bold')).pack(side=tk.LEFT, padx=(5, 0))
+            
+            # Details
+            details_text = f"Sender: {suggestion['sender']}\nCategory: {suggestion['suggested_category']}\nConfidence: {suggestion['confidence']:.1%}"
+            ttk.Label(suggestion_frame, text=details_text, foreground="gray").pack(anchor=tk.W, pady=(5, 0))
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Buttons frame
+        buttons_frame = ttk.Frame(main_frame)
+        buttons_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        def apply_selected():
+            applied_count = 0
+            for var, suggestion in selected_suggestions:
+                if var.get():
+                    try:
+                        self._apply_rule_suggestion(suggestion)
+                        applied_count += 1
+                    except Exception as e:
+                        self.log(f"❌ Failed to apply suggestion for {suggestion['sender']}: {e}")
+            
+            dialog.destroy()
+            if applied_count > 0:
+                messagebox.showinfo("Rules Applied", f"Successfully applied {applied_count} rule suggestions!\n\nYour filtering rules have been updated.")
+                # Refresh UI components that might be affected
+                self.load_settings()
+                if hasattr(self, 'refresh_rule_labels'):
+                    self.refresh_rule_labels()
+            else:
+                messagebox.showinfo("No Changes", "No suggestions were applied.")
+        
+        def cancel():
+            dialog.destroy()
+        
+        ttk.Button(buttons_frame, text="Apply Selected", command=apply_selected).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(buttons_frame, text="Cancel", command=cancel).pack(side=tk.RIGHT, padx=5)
+        
+        # Info label
+        ttk.Label(buttons_frame, text="ℹ️ Selected rules will be added to your filtering configuration", 
+                 foreground="gray", font=('TkDefaultFont', 8)).pack(side=tk.LEFT)
+    
+    def _apply_rule_suggestion(self, suggestion):
+        """Apply a single rule suggestion by updating the appropriate rule file."""
+        if suggestion['type'] == 'sender_rule':
+            category = suggestion['suggested_category']
+            sender = suggestion['sender']
+            
+            # Load or create the rule file
+            rules_dir = "rules"
+            os.makedirs(rules_dir, exist_ok=True)
+            rule_file = os.path.join(rules_dir, f"{category}.json")
+            
+            if os.path.exists(rule_file):
+                with open(rule_file, 'r') as f:
+                    rule_data = json.load(f)
+            else:
+                # Create new rule file
+                rule_data = {
+                    "description": f"Rules for {category} category",
+                    "senders": [],
+                    "keywords": {
+                        "subject": [],
+                        "body": []
+                    },
+                    "conditions": {
+                        "sender_domain": [],
+                        "exclude_keywords": []
+                    },
+                    "actions": {
+                        "apply_label": category,
+                        "mark_as_read": False,
+                        "archive": True if category != 'INBOX' else False
+                    }
+                }
+            
+            # Add sender if not already present
+            if sender not in rule_data.get('senders', []):
+                rule_data.setdefault('senders', []).append(sender)
+                
+                # Save the updated rule file
+                with open(rule_file, 'w') as f:
+                    json.dump(rule_data, f, indent=2)
+                
+                self.log(f"✅ Added '{sender}' to {category} rules")
+            else:
+                self.log(f"ℹ️ '{sender}' already exists in {category} rules")
     
     def apply_learning_suggestions(self):
         """Apply learning suggestions to improve the system."""
