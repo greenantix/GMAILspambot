@@ -25,7 +25,7 @@
     "branch_protection": ["main", "master"]
   },
   "llm_integration": {
-    "model": "meta-llama-3.1-8b-instruct",
+    "model": "phi-3-mini-4k-instruct",
     "url": "http://127.0.0.1:1234/v1/chat/completions",
     "temperature": 0.3,
     "max_tokens": 4096
