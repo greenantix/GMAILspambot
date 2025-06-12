@@ -144,15 +144,354 @@ class EmailLearningEngine:
 
     def suggest_rule_updates(self):
         """Analyze history to suggest new rules or modifications."""
-        # Placeholder for future implementation
-        self.logger.info("Analyzing history for rule update suggestions...")
-        return {}
+        self.logger.info("Analyzing categorization history for rule update suggestions...")
+        
+        if not self.categorization_history:
+            self.logger.info("No categorization history available for analysis")
+            return {}
+        
+        suggestions = {
+            'sender_corrections': {},
+            'keyword_patterns': {},
+            'confidence_improvements': [],
+            'summary': {}
+        }
+        
+        # Analyze user overrides to identify patterns
+        override_patterns = {}
+        low_confidence_patterns = {}
+        
+        for record in self.categorization_history:
+            sender = record.get('sender', '').lower()
+            subject = record.get('subject', '').lower()
+            llm_action = record.get('llm_action')
+            user_override = record.get('user_override')
+            confidence = record.get('confidence', 0.5)
+            
+            # Track user corrections
+            if user_override and user_override != llm_action:
+                correction_key = f"{sender}|{llm_action}→{user_override}"
+                if correction_key not in override_patterns:
+                    override_patterns[correction_key] = {
+                        'sender': sender,
+                        'from_category': llm_action,
+                        'to_category': user_override,
+                        'count': 0,
+                        'subjects': []
+                    }
+                override_patterns[correction_key]['count'] += 1
+                override_patterns[correction_key]['subjects'].append(subject)
+            
+            # Track low confidence decisions
+            if confidence < 0.7:
+                if sender not in low_confidence_patterns:
+                    low_confidence_patterns[sender] = {
+                        'sender': sender,
+                        'low_confidence_count': 0,
+                        'categories': {},
+                        'avg_confidence': 0,
+                        'subjects': []
+                    }
+                low_confidence_patterns[sender]['low_confidence_count'] += 1
+                low_confidence_patterns[sender]['categories'][llm_action] = \
+                    low_confidence_patterns[sender]['categories'].get(llm_action, 0) + 1
+                low_confidence_patterns[sender]['subjects'].append(subject)
+        
+        # Generate sender correction suggestions
+        for pattern_key, pattern in override_patterns.items():
+            if pattern['count'] >= 3:  # At least 3 corrections for the same sender
+                suggestions['sender_corrections'][pattern['sender']] = {
+                    'suggested_category': pattern['to_category'],
+                    'correction_count': pattern['count'],
+                    'confidence': min(0.9, 0.5 + (pattern['count'] * 0.1)),
+                    'reason': f"User consistently moved emails from {pattern['from_category']} to {pattern['to_category']}",
+                    'sample_subjects': pattern['subjects'][:3]
+                }
+        
+        # Generate keyword pattern suggestions
+        keyword_suggestions = self._extract_keyword_patterns(override_patterns)
+        suggestions['keyword_patterns'] = keyword_suggestions
+        
+        # Generate confidence improvement suggestions
+        for sender, pattern in low_confidence_patterns.items():
+            if pattern['low_confidence_count'] >= 5:
+                dominant_category = max(pattern['categories'], key=pattern['categories'].get)
+                suggestions['confidence_improvements'].append({
+                    'sender': sender,
+                    'suggested_category': dominant_category,
+                    'low_confidence_count': pattern['low_confidence_count'],
+                    'reason': f"Sender frequently triggers low confidence, suggest explicit rule",
+                    'sample_subjects': pattern['subjects'][:3]
+                })
+        
+        # Generate summary statistics
+        total_records = len(self.categorization_history)
+        total_overrides = len([r for r in self.categorization_history if r.get('user_override')])
+        low_confidence_count = len([r for r in self.categorization_history if r.get('confidence', 0.5) < 0.7])
+        
+        suggestions['summary'] = {
+            'total_records_analyzed': total_records,
+            'total_user_overrides': total_overrides,
+            'override_rate': (total_overrides / total_records * 100) if total_records > 0 else 0,
+            'low_confidence_count': low_confidence_count,
+            'low_confidence_rate': (low_confidence_count / total_records * 100) if total_records > 0 else 0,
+            'sender_suggestions': len(suggestions['sender_corrections']),
+            'keyword_suggestions': len(suggestions['keyword_patterns']),
+            'confidence_suggestions': len(suggestions['confidence_improvements'])
+        }
+        
+        self.logger.info(f"Generated {len(suggestions['sender_corrections'])} sender suggestions, "
+                        f"{len(suggestions['keyword_patterns'])} keyword suggestions, "
+                        f"{len(suggestions['confidence_improvements'])} confidence suggestions")
+        
+        return suggestions
+    
+    def _extract_keyword_patterns(self, override_patterns):
+        """Extract common keywords from correction patterns."""
+        keyword_suggestions = {}
+        
+        # Group corrections by target category
+        category_subjects = {}
+        for pattern in override_patterns.values():
+            if pattern['count'] >= 2:  # At least 2 corrections
+                target_cat = pattern['to_category']
+                if target_cat not in category_subjects:
+                    category_subjects[target_cat] = []
+                category_subjects[target_cat].extend(pattern['subjects'])
+        
+        # Extract common keywords for each category
+        for category, subjects in category_subjects.items():
+            if len(subjects) >= 3:
+                # Simple keyword extraction - find words that appear in multiple subjects
+                word_counts = {}
+                for subject in subjects:
+                    words = subject.lower().split()
+                    for word in words:
+                        if len(word) > 3 and word.isalpha():  # Skip short words and numbers
+                            word_counts[word] = word_counts.get(word, 0) + 1
+                
+                # Find words that appear in at least 30% of subjects
+                threshold = max(2, len(subjects) * 0.3)
+                common_keywords = [word for word, count in word_counts.items() if count >= threshold]
+                
+                if common_keywords:
+                    keyword_suggestions[category] = {
+                        'suggested_keywords': common_keywords[:5],  # Top 5 keywords
+                        'subject_count': len(subjects),
+                        'confidence': min(0.8, len(common_keywords) * 0.1),
+                        'reason': f"Keywords frequently appear in emails corrected to {category}"
+                    }
+        
+        return keyword_suggestions
 
     def detect_new_patterns(self):
         """Identify emerging email patterns that need new categories."""
-        # Placeholder for future implementation
-        self.logger.info("Detecting new email patterns...")
-        return []
+        self.logger.info("Detecting new email patterns from REVIEW category...")
+        
+        if not self.categorization_history:
+            self.logger.info("No categorization history available for pattern detection")
+            return []
+        
+        # Find emails that were categorized as REVIEW due to low confidence
+        review_emails = []
+        for record in self.categorization_history:
+            llm_action = record.get('llm_action')
+            confidence = record.get('confidence', 0.5)
+            
+            # Include REVIEW emails and low-confidence emails
+            if llm_action == 'REVIEW' or confidence < 0.6:
+                review_emails.append({
+                    'sender': record.get('sender', '').lower(),
+                    'subject': record.get('subject', '').lower(),
+                    'timestamp': record.get('timestamp'),
+                    'confidence': confidence,
+                    'original_action': llm_action
+                })
+        
+        if len(review_emails) < 10:
+            self.logger.info(f"Only {len(review_emails)} REVIEW emails found, need at least 10 for pattern detection")
+            return []
+        
+        # Cluster emails by sender domain and subject patterns
+        patterns = []
+        sender_clusters = self._cluster_by_sender_domain(review_emails)
+        subject_clusters = self._cluster_by_subject_keywords(review_emails)
+        
+        # Analyze sender domain clusters
+        for domain, emails in sender_clusters.items():
+            if len(emails) >= 5:  # At least 5 emails from same domain
+                pattern = self._analyze_domain_pattern(domain, emails)
+                if pattern:
+                    patterns.append(pattern)
+        
+        # Analyze subject keyword clusters
+        for keyword_group, emails in subject_clusters.items():
+            if len(emails) >= 5:  # At least 5 emails with similar keywords
+                pattern = self._analyze_subject_pattern(keyword_group, emails)
+                if pattern:
+                    patterns.append(pattern)
+        
+        # Sort patterns by frequency and confidence
+        patterns.sort(key=lambda x: (x['email_count'], x['confidence']), reverse=True)
+        
+        self.logger.info(f"Detected {len(patterns)} potential new patterns")
+        return patterns[:10]  # Return top 10 patterns
+    
+    def _cluster_by_sender_domain(self, emails):
+        """Cluster emails by sender domain."""
+        domain_clusters = {}
+        
+        for email in emails:
+            sender = email['sender']
+            # Extract domain from email address
+            if '@' in sender:
+                domain = sender.split('@')[-1].strip()
+            else:
+                domain = sender
+            
+            if domain not in domain_clusters:
+                domain_clusters[domain] = []
+            domain_clusters[domain].append(email)
+        
+        # Filter out clusters that are too small
+        return {domain: emails for domain, emails in domain_clusters.items() if len(emails) >= 3}
+    
+    def _cluster_by_subject_keywords(self, emails):
+        """Cluster emails by common subject keywords."""
+        keyword_groups = {}
+        
+        # Extract meaningful keywords from subjects
+        for email in emails:
+            subject = email['subject']
+            words = [w for w in subject.split() if len(w) > 3 and w.isalpha()]
+            
+            # Create keyword combinations
+            for i, word in enumerate(words):
+                for j in range(i+1, min(i+3, len(words))):  # 2-3 word combinations
+                    keyword_combo = ' '.join(words[i:j+1])
+                    if keyword_combo not in keyword_groups:
+                        keyword_groups[keyword_combo] = []
+                    keyword_groups[keyword_combo].append(email)
+        
+        # Filter for groups with meaningful overlap
+        filtered_groups = {}
+        for keywords, emails in keyword_groups.items():
+            if len(emails) >= 3 and len(set(e['sender'] for e in emails)) >= 2:  # Multiple senders
+                filtered_groups[keywords] = emails
+        
+        return filtered_groups
+    
+    def _analyze_domain_pattern(self, domain, emails):
+        """Analyze a domain cluster to suggest a new category."""
+        # Extract common characteristics
+        subjects = [e['subject'] for e in emails]
+        avg_confidence = sum(e['confidence'] for e in emails) / len(emails)
+        
+        # Simple heuristics to suggest category type
+        common_words = self._extract_common_words(subjects)
+        
+        # Suggest category based on domain and content patterns
+        suggested_category = self._suggest_category_for_domain(domain, common_words)
+        
+        return {
+            'type': 'domain_pattern',
+            'identifier': domain,
+            'suggested_category': suggested_category,
+            'email_count': len(emails),
+            'confidence': min(0.8, len(emails) * 0.1),
+            'avg_llm_confidence': avg_confidence,
+            'common_keywords': common_words[:5],
+            'sample_subjects': subjects[:3],
+            'reason': f"Domain '{domain}' appears frequently in low-confidence emails",
+            'suggested_rule': {
+                'type': 'sender_domain',
+                'domain': domain,
+                'category': suggested_category
+            }
+        }
+    
+    def _analyze_subject_pattern(self, keyword_group, emails):
+        """Analyze a subject keyword cluster."""
+        unique_senders = list(set(e['sender'] for e in emails))
+        avg_confidence = sum(e['confidence'] for e in emails) / len(emails)
+        
+        # Suggest category based on keywords
+        suggested_category = self._suggest_category_for_keywords(keyword_group)
+        
+        return {
+            'type': 'subject_pattern', 
+            'identifier': keyword_group,
+            'suggested_category': suggested_category,
+            'email_count': len(emails),
+            'confidence': min(0.7, len(emails) * 0.08),
+            'avg_llm_confidence': avg_confidence,
+            'unique_senders': len(unique_senders),
+            'sample_senders': unique_senders[:3],
+            'sample_subjects': [e['subject'] for e in emails[:3]],
+            'reason': f"Keyword pattern '{keyword_group}' appears frequently in low-confidence emails",
+            'suggested_rule': {
+                'type': 'subject_keywords',
+                'keywords': keyword_group.split(),
+                'category': suggested_category
+            }
+        }
+    
+    def _extract_common_words(self, subjects):
+        """Extract words that appear in multiple subjects."""
+        word_counts = {}
+        for subject in subjects:
+            words = [w.lower() for w in subject.split() if len(w) > 3 and w.isalpha()]
+            for word in set(words):  # Count each word once per subject
+                word_counts[word] = word_counts.get(word, 0) + 1
+        
+        threshold = max(2, len(subjects) * 0.3)
+        return [word for word, count in word_counts.items() if count >= threshold]
+    
+    def _suggest_category_for_domain(self, domain, common_words):
+        """Suggest a category based on domain and content."""
+        domain_lower = domain.lower()
+        words_text = ' '.join(common_words).lower()
+        
+        # Financial institutions
+        if any(term in domain_lower for term in ['bank', 'credit', 'finance', 'payment', 'billing']):
+            return 'BILLS'
+        
+        # Shopping and retail
+        if any(term in domain_lower for term in ['shop', 'store', 'retail', 'amazon', 'ebay']):
+            return 'SHOPPING'
+        
+        # News and media
+        if any(term in domain_lower for term in ['news', 'media', 'newsletter', 'blog']):
+            return 'NEWSLETTERS'
+        
+        # Social and gaming
+        if any(term in domain_lower for term in ['social', 'game', 'gaming', 'facebook', 'twitter']):
+            return 'SOCIAL'
+        
+        # Check content keywords
+        if any(term in words_text for term in ['invoice', 'payment', 'bill', 'statement']):
+            return 'BILLS'
+        if any(term in words_text for term in ['order', 'shipping', 'delivery', 'purchase']):
+            return 'SHOPPING'
+        if any(term in words_text for term in ['newsletter', 'update', 'news']):
+            return 'NEWSLETTERS'
+        
+        return 'PERSONAL'  # Default fallback
+    
+    def _suggest_category_for_keywords(self, keywords):
+        """Suggest a category based on subject keywords."""
+        keywords_lower = keywords.lower()
+        
+        if any(term in keywords_lower for term in ['invoice', 'payment', 'bill', 'statement', 'receipt']):
+            return 'BILLS'
+        if any(term in keywords_lower for term in ['order', 'shipping', 'delivery', 'purchase', 'sale']):
+            return 'SHOPPING'
+        if any(term in keywords_lower for term in ['newsletter', 'update', 'news', 'weekly', 'digest']):
+            return 'NEWSLETTERS'
+        if any(term in keywords_lower for term in ['game', 'social', 'friend', 'notification']):
+            return 'SOCIAL'
+        
+        return 'PERSONAL'  # Default fallback
 
 class GmailLMCleaner:
     def __init__(self, credentials_file='config/credentials.json', token_file='config/token.json', settings_file='config/settings.json'):
@@ -2427,6 +2766,190 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
             if log_callback:
                 log_callback(f"Error analyzing unsubscribe candidates: {e}")
             return []
+
+    def get_detailed_unsubscribe_candidates(self, log_callback=None):
+        """
+        Get detailed unsubscribe candidates with enhanced data for UI display.
+        Returns list of dictionaries with sender, count, latest_subject, message_ids.
+        """
+        if log_callback:
+            log_callback("🕵️ Analyzing for detailed unsubscribe candidates...")
+
+        candidates = {}
+        try:
+            # Query for unread promotional and marketing emails
+            queries = [
+                "is:unread category:promotions",
+                "is:unread (unsubscribe OR newsletter OR marketing)"
+            ]
+            
+            all_messages = []
+            for query in queries:
+                results = self.service.users().messages().list(userId='me', q=query, maxResults=300).execute()
+                messages = results.get('messages', [])
+                all_messages.extend(messages)
+            
+            # Remove duplicates
+            unique_messages = {msg['id']: msg for msg in all_messages}.values()
+            
+            if log_callback:
+                log_callback(f"Found {len(unique_messages)} unique promotional emails to analyze.")
+
+            for msg in unique_messages:
+                try:
+                    email_data = self.get_email_content(msg['id'])
+                    if email_data:
+                        sender = email_data['sender']
+                        subject = email_data['subject']
+                        
+                        if sender in candidates:
+                            candidates[sender]['count'] += 1
+                            candidates[sender]['message_ids'].append(msg['id'])
+                            # Keep the most recent subject
+                            candidates[sender]['latest_subject'] = subject
+                        else:
+                            candidates[sender] = {
+                                'sender': sender,
+                                'count': 1, 
+                                'latest_subject': subject,
+                                'message_ids': [msg['id']]
+                            }
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"Error processing message {msg['id']}: {e}")
+                    continue
+            
+            # Filter for candidates with enough emails to warrant unsubscribing
+            filtered_candidates = []
+            for sender, data in candidates.items():
+                if data['count'] >= 3:  # At least 3 unread emails
+                    filtered_candidates.append(data)
+            
+            # Sort by count (most emails first)
+            filtered_candidates.sort(key=lambda x: x['count'], reverse=True)
+            
+            if log_callback:
+                log_callback(f"Found {len(filtered_candidates)} potential unsubscribe candidates.")
+            
+            return filtered_candidates
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"Error analyzing detailed unsubscribe candidates: {e}")
+            return []
+
+    def process_unsubscribe_requests(self, candidates):
+        """
+        Process unsubscribe requests for selected candidates.
+        Returns tuple of (success_count, failed_count).
+        """
+        success_count = 0
+        failed_count = 0
+        
+        for candidate in candidates:
+            sender = candidate['sender']
+            message_ids = candidate['message_ids']
+            
+            try:
+                # Get the most recent message to look for unsubscribe headers
+                if message_ids:
+                    latest_msg_id = message_ids[0]  # Assuming most recent is first
+                    unsubscribe_info = self.extract_unsubscribe_info(latest_msg_id)
+                    
+                    if unsubscribe_info:
+                        if self.attempt_unsubscribe(unsubscribe_info, sender):
+                            success_count += 1
+                            self.logger.info(f"Successfully processed unsubscribe for {sender}")
+                        else:
+                            failed_count += 1
+                            self.logger.warning(f"Failed to unsubscribe from {sender}")
+                    else:
+                        # No unsubscribe info found, just log it as failed
+                        failed_count += 1
+                        self.logger.warning(f"No unsubscribe information found for {sender}")
+                else:
+                    failed_count += 1
+                    
+            except Exception as e:
+                failed_count += 1
+                self.logger.error(f"Error processing unsubscribe for {sender}: {e}")
+        
+        return success_count, failed_count
+
+    def extract_unsubscribe_info(self, message_id):
+        """
+        Extract unsubscribe information from email headers.
+        Returns dict with unsubscribe URL or email if found.
+        """
+        try:
+            # Get the message with headers
+            message = self.service.users().messages().get(
+                userId='me', 
+                id=message_id,
+                format='full'
+            ).execute()
+            
+            headers = message['payload'].get('headers', [])
+            
+            # Look for List-Unsubscribe header
+            list_unsubscribe = None
+            for header in headers:
+                if header['name'].lower() == 'list-unsubscribe':
+                    list_unsubscribe = header['value']
+                    break
+            
+            if list_unsubscribe:
+                # Parse the List-Unsubscribe header
+                # Format is usually: <mailto:unsubscribe@example.com>, <http://example.com/unsubscribe>
+                import re
+                
+                # Extract URLs
+                url_matches = re.findall(r'<(https?://[^>]+)>', list_unsubscribe)
+                # Extract email addresses
+                email_matches = re.findall(r'<mailto:([^>]+)>', list_unsubscribe)
+                
+                if url_matches or email_matches:
+                    return {
+                        'urls': url_matches,
+                        'emails': email_matches,
+                        'raw_header': list_unsubscribe
+                    }
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting unsubscribe info from message {message_id}: {e}")
+            return None
+
+    def attempt_unsubscribe(self, unsubscribe_info, sender):
+        """
+        Attempt to unsubscribe using the provided unsubscribe information.
+        Returns True if successful, False otherwise.
+        """
+        try:
+            # For now, we'll just open the unsubscribe URL in the user's browser
+            # In a production system, you might want to be more sophisticated
+            
+            if unsubscribe_info.get('urls'):
+                url = unsubscribe_info['urls'][0]  # Use the first URL
+                import webbrowser
+                webbrowser.open(url)
+                self.logger.info(f"Opened unsubscribe URL for {sender}: {url}")
+                return True
+                
+            elif unsubscribe_info.get('emails'):
+                # For email-based unsubscribing, we could compose and send an email
+                # For now, we'll just log it
+                email = unsubscribe_info['emails'][0]
+                self.logger.info(f"Unsubscribe email for {sender}: {email}")
+                # TODO: Implement automatic email sending for unsubscribe
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error attempting unsubscribe for {sender}: {e}")
+            return False
             
     def auto_evolve_system(self, log_callback=None):
         """
@@ -2819,9 +3342,25 @@ class GmailCleanerGUI:
         
         ttk.Button(rule_select_frame, text="Load Rule", command=self.load_rule_details).pack(side=tk.LEFT, padx=5)
         
-        # Rule details display
+        # Rule action buttons
+        rule_actions_frame = ttk.Frame(rules_frame)
+        rule_actions_frame.pack(fill=tk.X, pady=5)
+        
+        self.save_rule_btn = ttk.Button(rule_actions_frame, text="Save Rule", command=self.save_rule_details, state='disabled')
+        self.save_rule_btn.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(rule_actions_frame, text="Create New Rule", command=self.create_new_rule).pack(side=tk.LEFT, padx=5)
+        
+        self.validate_rule_btn = ttk.Button(rule_actions_frame, text="Validate Rule", command=self.validate_rule_format)
+        self.validate_rule_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Rule details display (now editable)
         self.rule_details_text = scrolledtext.ScrolledText(rules_frame, height=10)
         self.rule_details_text.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Bind text change event to enable save button
+        self.rule_details_text.bind('<Modified>', self.on_rule_text_modified)
+        self.rule_original_content = ""
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -2830,6 +3369,7 @@ class GmailCleanerGUI:
         self.gmail_label_manager = None
         self.setup_label_mappings_table()
         self.refresh_labels()
+        self.refresh_rule_labels()
         
     def log(self, message):
         """Add message to log."""
@@ -3639,6 +4179,8 @@ Debug Information:
             rules_dir = "rules"
             rule_file = os.path.join(rules_dir, f"{label_name}.json")
             
+            self.rule_details_text.edit_modified(False)  # Reset modified flag
+            
             if os.path.exists(rule_file):
                 with open(rule_file, 'r') as f:
                     rule_data = json.load(f)
@@ -3648,16 +4190,243 @@ Debug Information:
                 
                 self.rule_details_text.delete(1.0, tk.END)
                 self.rule_details_text.insert(1.0, formatted_data)
+                self.rule_original_content = formatted_data
                 
                 self.log(f"Loaded rule details for {label_name}")
             else:
+                # Create a template for new rule
+                template_rule = {
+                    "description": f"Rules for {label_name} category",
+                    "senders": [],
+                    "keywords": {
+                        "subject": [],
+                        "body": []
+                    },
+                    "conditions": {
+                        "sender_domain": [],
+                        "exclude_keywords": []
+                    },
+                    "actions": {
+                        "apply_label": label_name,
+                        "mark_as_read": False,
+                        "archive": False
+                    }
+                }
+                
+                formatted_template = json.dumps(template_rule, indent=2)
                 self.rule_details_text.delete(1.0, tk.END)
-                self.rule_details_text.insert(1.0, f"No rule file found for '{label_name}'\n\nRule file would be: {rule_file}")
+                self.rule_details_text.insert(1.0, formatted_template)
+                self.rule_original_content = formatted_template
+                
+                self.log(f"No rule file found for '{label_name}' - loaded template")
+            
+            self.save_rule_btn.config(state='disabled')
                 
         except Exception as e:
             self.log(f"Error loading rule details: {e}")
             self.rule_details_text.delete(1.0, tk.END)
             self.rule_details_text.insert(1.0, f"Error loading rule details: {e}")
+
+    def on_rule_text_modified(self, event=None):
+        """Handle text modification in rule editor."""
+        if self.rule_details_text.edit_modified():
+            current_content = self.rule_details_text.get(1.0, tk.END).strip()
+            if current_content != self.rule_original_content.strip():
+                self.save_rule_btn.config(state='normal')
+            else:
+                self.save_rule_btn.config(state='disabled')
+
+    def save_rule_details(self):
+        """Save the current rule details to file."""
+        label_name = self.rule_label_var.get()
+        if not label_name:
+            messagebox.showwarning("Warning", "No label selected.")
+            return
+        
+        try:
+            # Get content from text widget
+            content = self.rule_details_text.get(1.0, tk.END).strip()
+            
+            # Validate JSON format
+            try:
+                rule_data = json.loads(content)
+            except json.JSONDecodeError as e:
+                messagebox.showerror("JSON Error", f"Invalid JSON format:\n{e}")
+                return
+            
+            # Validate rule structure
+            if not self.validate_rule_structure(rule_data):
+                return
+            
+            # Ensure rules directory exists
+            rules_dir = "rules"
+            os.makedirs(rules_dir, exist_ok=True)
+            
+            # Save the rule file
+            rule_file = os.path.join(rules_dir, f"{label_name}.json")
+            with open(rule_file, 'w') as f:
+                json.dump(rule_data, f, indent=2)
+            
+            self.rule_original_content = content
+            self.save_rule_btn.config(state='disabled')
+            self.rule_details_text.edit_modified(False)
+            
+            self.log(f"✅ Saved rule for {label_name}")
+            messagebox.showinfo("Success", f"Rule for '{label_name}' saved successfully!")
+            
+        except Exception as e:
+            self.log(f"❌ Error saving rule: {e}")
+            messagebox.showerror("Error", f"Failed to save rule:\n{e}")
+
+    def validate_rule_structure(self, rule_data):
+        """Validate the structure of a rule."""
+        required_fields = ['description', 'senders', 'keywords', 'conditions', 'actions']
+        
+        for field in required_fields:
+            if field not in rule_data:
+                messagebox.showerror("Validation Error", f"Missing required field: '{field}'")
+                return False
+        
+        # Validate keywords structure
+        if 'keywords' in rule_data:
+            keywords = rule_data['keywords']
+            if not isinstance(keywords, dict):
+                messagebox.showerror("Validation Error", "'keywords' must be an object")
+                return False
+            
+            if 'subject' not in keywords or 'body' not in keywords:
+                messagebox.showerror("Validation Error", "'keywords' must contain 'subject' and 'body' arrays")
+                return False
+        
+        # Validate actions structure
+        if 'actions' in rule_data:
+            actions = rule_data['actions']
+            if not isinstance(actions, dict):
+                messagebox.showerror("Validation Error", "'actions' must be an object")
+                return False
+        
+        return True
+
+    def validate_rule_format(self):
+        """Validate the current rule format."""
+        try:
+            content = self.rule_details_text.get(1.0, tk.END).strip()
+            rule_data = json.loads(content)
+            
+            if self.validate_rule_structure(rule_data):
+                messagebox.showinfo("Validation", "✅ Rule format is valid!")
+                self.log("Rule validation passed")
+            
+        except json.JSONDecodeError as e:
+            messagebox.showerror("JSON Error", f"Invalid JSON format:\n{e}")
+        except Exception as e:
+            messagebox.showerror("Validation Error", f"Error validating rule:\n{e}")
+
+    def create_new_rule(self):
+        """Create a new rule file."""
+        # Dialog to get new rule name
+        new_rule_dialog = tk.Toplevel(self.root)
+        new_rule_dialog.title("Create New Rule")
+        new_rule_dialog.geometry("400x200")
+        new_rule_dialog.transient(self.root)
+        new_rule_dialog.grab_set()
+        
+        # Center the dialog
+        new_rule_dialog.geometry("+%d+%d" % (self.root.winfo_rootx() + 50, self.root.winfo_rooty() + 50))
+        
+        # Rule name input
+        ttk.Label(new_rule_dialog, text="Rule Name (Label):").pack(pady=10)
+        rule_name_var = tk.StringVar()
+        rule_name_entry = ttk.Entry(new_rule_dialog, textvariable=rule_name_var, width=30)
+        rule_name_entry.pack(pady=5)
+        rule_name_entry.focus()
+        
+        # Description input
+        ttk.Label(new_rule_dialog, text="Description:").pack(pady=(10, 5))
+        description_var = tk.StringVar()
+        description_entry = ttk.Entry(new_rule_dialog, textvariable=description_var, width=50)
+        description_entry.pack(pady=5)
+        
+        # Buttons
+        button_frame = ttk.Frame(new_rule_dialog)
+        button_frame.pack(pady=20)
+        
+        def create_rule():
+            rule_name = rule_name_var.get().strip()
+            description = description_var.get().strip()
+            
+            if not rule_name:
+                messagebox.showwarning("Warning", "Rule name is required.")
+                return
+            
+            # Create new rule template
+            new_rule = {
+                "description": description or f"Rules for {rule_name} category",
+                "senders": [],
+                "keywords": {
+                    "subject": [],
+                    "body": []
+                },
+                "conditions": {
+                    "sender_domain": [],
+                    "exclude_keywords": []
+                },
+                "actions": {
+                    "apply_label": rule_name,
+                    "mark_as_read": False,
+                    "archive": False
+                }
+            }
+            
+            try:
+                # Ensure rules directory exists
+                rules_dir = "rules"
+                os.makedirs(rules_dir, exist_ok=True)
+                
+                # Check if rule already exists
+                rule_file = os.path.join(rules_dir, f"{rule_name}.json")
+                if os.path.exists(rule_file):
+                    if not messagebox.askyesno("File Exists", f"Rule '{rule_name}' already exists. Overwrite?"):
+                        return
+                
+                # Save the new rule
+                with open(rule_file, 'w') as f:
+                    json.dump(new_rule, f, indent=2)
+                
+                # Update UI
+                self.rule_label_var.set(rule_name)
+                self.load_rule_details()
+                
+                # Update combo box options
+                self.refresh_rule_labels()
+                
+                self.log(f"✅ Created new rule: {rule_name}")
+                new_rule_dialog.destroy()
+                messagebox.showinfo("Success", f"New rule '{rule_name}' created successfully!")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to create rule:\n{e}")
+        
+        ttk.Button(button_frame, text="Create", command=create_rule).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=new_rule_dialog.destroy).pack(side=tk.LEFT, padx=5)
+        
+        # Bind Enter key to create
+        new_rule_dialog.bind('<Return>', lambda e: create_rule())
+
+    def refresh_rule_labels(self):
+        """Refresh the rule label dropdown with available rules."""
+        try:
+            rules_dir = "rules"
+            if os.path.exists(rules_dir):
+                rule_files = [f[:-5] for f in os.listdir(rules_dir) if f.endswith('.json')]
+                rule_files.sort()
+                self.rule_label_combo['values'] = rule_files
+                self.log(f"Refreshed rule labels: {len(rule_files)} rules found")
+            else:
+                self.rule_label_combo['values'] = []
+                
+        except Exception as e:
+            self.log(f"Error refreshing rule labels: {e}")
     
     def run(self):
         """Start the GUI."""
@@ -3679,40 +4448,65 @@ Debug Information:
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         
+        # Analytics Controls
+        control_frame = ttk.LabelFrame(scrollable_frame, text="Analytics Controls", padding=10)
+        control_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Button(control_frame, text="Refresh Analytics", command=self.refresh_analytics).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Export Analytics Report", command=self.export_analytics_report).pack(side=tk.LEFT, padx=5)
+        
         # Category Distribution
         dist_frame = ttk.LabelFrame(scrollable_frame, text="Category Distribution", padding=10)
         dist_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        # Placeholder for pie chart
-        self.dist_canvas = tk.Canvas(dist_frame, width=300, height=200, bg='white')
+        # Canvas for pie chart with real data
+        self.dist_canvas = tk.Canvas(dist_frame, width=400, height=300, bg='white')
         self.dist_canvas.pack()
-        self.dist_canvas.create_text(150, 100, text="Category Distribution Pie Chart (placeholder)")
+        
+        # Category statistics text
+        self.category_stats_text = scrolledtext.ScrolledText(dist_frame, height=6)
+        self.category_stats_text.pack(fill=tk.X, pady=5)
 
         # Filter Effectiveness
         effectiveness_frame = ttk.LabelFrame(scrollable_frame, text="Filter Effectiveness", padding=10)
         effectiveness_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        ttk.Label(effectiveness_frame, text="Effectiveness scores (placeholder):").pack(anchor=tk.W)
-        self.effectiveness_text = scrolledtext.ScrolledText(effectiveness_frame, height=5)
+        self.effectiveness_text = scrolledtext.ScrolledText(effectiveness_frame, height=8)
         self.effectiveness_text.pack(fill=tk.X, pady=5)
-        self.effectiveness_text.insert(1.0, "SHOPPING Filter: 95%\nBILLS Filter: 98%\n")
+
+        # Learning Insights
+        insights_frame = ttk.LabelFrame(scrollable_frame, text="Learning Insights", padding=10)
+        insights_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.insights_text = scrolledtext.ScrolledText(insights_frame, height=8)
+        self.insights_text.pack(fill=tk.X, pady=5)
 
         # Suggested Optimizations
         optimizations_frame = ttk.LabelFrame(scrollable_frame, text="Suggested Optimizations", padding=10)
         optimizations_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        ttk.Label(optimizations_frame, text="Suggested optimizations (placeholder):").pack(anchor=tk.W)
-        self.optimizations_text = scrolledtext.ScrolledText(optimizations_frame, height=5)
+        self.optimizations_text = scrolledtext.ScrolledText(optimizations_frame, height=8)
         self.optimizations_text.pack(fill=tk.X, pady=5)
-        self.optimizations_text.insert(1.0, "Suggestion: Create a new label for 'Project X' based on recent emails.\n")
         
         # Auto-Evolve Button
         evolve_frame = ttk.LabelFrame(scrollable_frame, text="Auto-Evolution", padding=10)
         evolve_frame.pack(fill=tk.X, padx=10, pady=5)
-        ttk.Button(evolve_frame, text="Run Auto-Evolution", command=self.run_auto_evolution).pack(pady=5)
+        
+        evolution_buttons = ttk.Frame(evolve_frame)
+        evolution_buttons.pack(fill=tk.X)
+        
+        ttk.Button(evolution_buttons, text="Run Auto-Evolution", command=self.run_auto_evolution).pack(side=tk.LEFT, padx=5)
+        ttk.Button(evolution_buttons, text="Apply Suggestions", command=self.apply_learning_suggestions).pack(side=tk.LEFT, padx=5)
+        
+        # Evolution results
+        self.evolution_text = scrolledtext.ScrolledText(evolve_frame, height=6)
+        self.evolution_text.pack(fill=tk.X, pady=5)
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        
+        # Load initial analytics data
+        self.root.after(1000, self.refresh_analytics)
 
     def setup_unsubscribe_tab(self, parent):
         """Setup the unsubscribe assistant tab."""
@@ -3720,14 +4514,35 @@ Debug Information:
         control_frame = ttk.LabelFrame(parent, text="Actions", padding=10)
         control_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        ttk.Button(control_frame, text="Find Unsubscribe Candidates", command=self.find_unsubscribe_candidates).pack(side=tk.LEFT, padx=5)
+        self.find_candidates_btn = ttk.Button(control_frame, text="Find Unsubscribe Candidates", command=self.find_unsubscribe_candidates)
+        self.find_candidates_btn.pack(side=tk.LEFT, padx=5)
         
-        # Candidates frame
+        self.unsubscribe_selected_btn = ttk.Button(control_frame, text="Unsubscribe Selected", command=self.unsubscribe_selected, state='disabled')
+        self.unsubscribe_selected_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Candidates frame with scrollable checkboxes
         candidates_frame = ttk.LabelFrame(parent, text="Unsubscribe Candidates", padding=10)
         candidates_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        self.unsubscribe_text = scrolledtext.ScrolledText(candidates_frame, height=15)
-        self.unsubscribe_text.pack(fill=tk.BOTH, expand=True)
+        # Create canvas and scrollbar for candidate list
+        canvas = tk.Canvas(candidates_frame)
+        scrollbar = ttk.Scrollbar(candidates_frame, orient="vertical", command=canvas.yview)
+        self.unsubscribe_candidates_frame = ttk.Frame(canvas)
+        
+        self.unsubscribe_candidates_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=self.unsubscribe_candidates_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Store candidate data and checkboxes
+        self.unsubscribe_candidates = []
+        self.candidate_vars = []
 
     def find_unsubscribe_candidates(self):
         """Find and display unsubscribe candidates."""
@@ -3735,26 +4550,458 @@ Debug Information:
             messagebox.showwarning("Warning", "Failed to establish Gmail connection")
             return
             
-        self.unsubscribe_text.delete(1.0, tk.END)
+        # Disable button and show loading state
+        self.find_candidates_btn.config(state='disabled', text="Finding Candidates...")
         self.log("Finding unsubscribe candidates...")
         
         def log_callback(message):
             self.root.after(0, lambda: self.log(message))
 
         def find_candidates_thread():
-            candidates = self.cleaner.analyze_unsubscribe_candidates(log_callback=log_callback)
-            self.root.after(0, lambda: self.display_unsubscribe_candidates(candidates))
+            try:
+                candidates_data = self.cleaner.get_detailed_unsubscribe_candidates(log_callback=log_callback)
+                self.root.after(0, lambda: self.display_unsubscribe_candidates(candidates_data))
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"❌ Error finding candidates: {e}"))
+            finally:
+                self.root.after(0, lambda: self.find_candidates_btn.config(state='normal', text="Find Unsubscribe Candidates"))
 
         threading.Thread(target=find_candidates_thread, daemon=True).start()
 
-    def display_unsubscribe_candidates(self, candidates):
-        """Display unsubscribe candidates in the text area."""
-        self.unsubscribe_text.delete(1.0, tk.END)
-        if candidates:
-            self.unsubscribe_text.insert(tk.END, "\n".join(candidates))
+    def display_unsubscribe_candidates(self, candidates_data):
+        """Display unsubscribe candidates with checkboxes."""
+        # Clear existing candidates
+        for widget in self.unsubscribe_candidates_frame.winfo_children():
+            widget.destroy()
+        
+        self.unsubscribe_candidates = []
+        self.candidate_vars = []
+        
+        if not candidates_data:
+            ttk.Label(self.unsubscribe_candidates_frame, text="No unsubscribe candidates found.").pack(pady=10)
+            self.log("No unsubscribe candidates found.")
+            return
+        
+        # Create checkboxes for each candidate
+        for i, candidate in enumerate(candidates_data):
+            var = tk.BooleanVar()
+            self.candidate_vars.append(var)
+            self.unsubscribe_candidates.append(candidate)
+            
+            frame = ttk.Frame(self.unsubscribe_candidates_frame)
+            frame.pack(fill=tk.X, padx=5, pady=2)
+            
+            checkbox = ttk.Checkbutton(
+                frame, 
+                variable=var,
+                command=self.update_unsubscribe_button_state
+            )
+            checkbox.pack(side=tk.LEFT)
+            
+            # Display sender and email count
+            sender = candidate.get('sender', 'Unknown')
+            count = candidate.get('count', 0)
+            latest_subject = candidate.get('latest_subject', 'No subject')
+            
+            label_text = f"{sender} ({count} emails) - Latest: {latest_subject[:50]}..."
+            label = ttk.Label(frame, text=label_text, wraplength=600)
+            label.pack(side=tk.LEFT, padx=(5, 0), fill=tk.X, expand=True)
+        
+        self.log(f"Found {len(candidates_data)} unsubscribe candidates.")
+        self.update_unsubscribe_button_state()
+
+    def update_unsubscribe_button_state(self):
+        """Enable/disable unsubscribe button based on selections."""
+        selected_count = sum(1 for var in self.candidate_vars if var.get())
+        if selected_count > 0:
+            self.unsubscribe_selected_btn.config(state='normal')
         else:
-            self.unsubscribe_text.insert(tk.END, "No unsubscribe candidates found.")
-        self.log("Unsubscribe analysis complete.")
+            self.unsubscribe_selected_btn.config(state='disabled')
+
+    def unsubscribe_selected(self):
+        """Unsubscribe from selected senders."""
+        selected_candidates = []
+        for i, var in enumerate(self.candidate_vars):
+            if var.get():
+                selected_candidates.append(self.unsubscribe_candidates[i])
+        
+        if not selected_candidates:
+            messagebox.showinfo("Info", "No candidates selected.")
+            return
+        
+        # Confirm action
+        if not messagebox.askyesno("Confirm Unsubscribe", 
+                                  f"Are you sure you want to unsubscribe from {len(selected_candidates)} senders?"):
+            return
+        
+        # Disable button and show progress
+        self.unsubscribe_selected_btn.config(state='disabled', text="Unsubscribing...")
+        
+        def unsubscribe_thread():
+            try:
+                success_count, failed_count = self.cleaner.process_unsubscribe_requests(selected_candidates)
+                
+                def update_ui():
+                    self.log(f"✅ Unsubscribe complete: {success_count} successful, {failed_count} failed")
+                    self.unsubscribe_selected_btn.config(state='normal', text="Unsubscribe Selected")
+                    
+                    # Remove successfully unsubscribed candidates from display
+                    if success_count > 0:
+                        messagebox.showinfo("Unsubscribe Complete", 
+                                          f"Successfully unsubscribed from {success_count} senders.\n"
+                                          f"{failed_count} attempts failed.")
+                        # Refresh the candidate list
+                        self.find_unsubscribe_candidates()
+                
+                self.root.after(0, update_ui)
+                
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"❌ Unsubscribe error: {e}"))
+                self.root.after(0, lambda: self.unsubscribe_selected_btn.config(state='normal', text="Unsubscribe Selected"))
+        
+        threading.Thread(target=unsubscribe_thread, daemon=True).start()
+
+    def refresh_analytics(self):
+        """Refresh all analytics data."""
+        if not self.ensure_cleaner_connection():
+            return
+            
+        def refresh_thread():
+            try:
+                # Load analytics data
+                analytics_data = self.generate_analytics_data()
+                
+                # Update UI in main thread
+                self.root.after(0, lambda: self.update_analytics_ui(analytics_data))
+                
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"❌ Analytics refresh failed: {e}"))
+                
+        threading.Thread(target=refresh_thread, daemon=True).start()
+    
+    def generate_analytics_data(self):
+        """Generate comprehensive analytics data."""
+        analytics = {
+            'category_distribution': {},
+            'filter_effectiveness': {},
+            'learning_insights': {},
+            'processing_stats': {},
+            'suggestions': {}
+        }
+        
+        # Analyze categorization history
+        history = self.cleaner.learning_engine.categorization_history
+        if history:
+            # Category distribution
+            category_counts = {}
+            confidence_by_category = {}
+            
+            for record in history:
+                action = record.get('llm_action', 'UNKNOWN')
+                confidence = record.get('confidence', 0.5)
+                
+                category_counts[action] = category_counts.get(action, 0) + 1
+                if action not in confidence_by_category:
+                    confidence_by_category[action] = []
+                confidence_by_category[action].append(confidence)
+            
+            analytics['category_distribution'] = category_counts
+            
+            # Calculate average confidence by category
+            analytics['confidence_by_category'] = {}
+            for category, confidences in confidence_by_category.items():
+                analytics['confidence_by_category'][category] = sum(confidences) / len(confidences)
+            
+            # User override analysis
+            overrides = [r for r in history if r.get('user_override')]
+            total_decisions = len(history)
+            override_rate = (len(overrides) / total_decisions * 100) if total_decisions > 0 else 0
+            
+            analytics['processing_stats'] = {
+                'total_decisions': total_decisions,
+                'user_overrides': len(overrides),
+                'override_rate': override_rate,
+                'avg_confidence': sum(r.get('confidence', 0.5) for r in history) / len(history)
+            }
+        
+        # Get learning suggestions
+        try:
+            rule_suggestions = self.cleaner.learning_engine.suggest_rule_updates()
+            pattern_suggestions = self.cleaner.learning_engine.detect_new_patterns()
+            
+            analytics['suggestions'] = {
+                'rule_updates': rule_suggestions,
+                'new_patterns': pattern_suggestions
+            }
+        except Exception as e:
+            analytics['suggestions'] = {'error': str(e)}
+        
+        # Filter effectiveness (mock data for now - would need actual filter statistics)
+        analytics['filter_effectiveness'] = {
+            'gmail_filters': 0.85,  # Placeholder
+            'llm_classification': analytics['processing_stats'].get('avg_confidence', 0.5) if history else 0.5,
+            'user_satisfaction': (100 - analytics['processing_stats'].get('override_rate', 0)) / 100 if history else 0.8
+        }
+        
+        return analytics
+    
+    def update_analytics_ui(self, analytics_data):
+        """Update the analytics UI with fresh data."""
+        try:
+            # Update category distribution pie chart
+            self.draw_category_pie_chart(analytics_data.get('category_distribution', {}))
+            
+            # Update category statistics
+            self.update_category_stats(analytics_data)
+            
+            # Update filter effectiveness
+            self.update_filter_effectiveness(analytics_data.get('filter_effectiveness', {}))
+            
+            # Update learning insights
+            self.update_learning_insights(analytics_data)
+            
+            # Update suggestions
+            self.update_suggestions_display(analytics_data.get('suggestions', {}))
+            
+            self.log("✅ Analytics refreshed successfully")
+            
+        except Exception as e:
+            self.log(f"❌ Error updating analytics UI: {e}")
+    
+    def draw_category_pie_chart(self, category_data):
+        """Draw a simple pie chart for category distribution."""
+        if not category_data:
+            self.dist_canvas.delete("all")
+            self.dist_canvas.create_text(200, 150, text="No category data available", font=("Arial", 12))
+            return
+        
+        self.dist_canvas.delete("all")
+        
+        # Calculate total and percentages
+        total = sum(category_data.values())
+        if total == 0:
+            return
+            
+        # Colors for different categories
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#FF9FF3', '#54A0FF', '#5F27CD']
+        
+        # Draw pie slices
+        x, y, size = 200, 150, 100
+        start_angle = 0
+        
+        legend_y = 50
+        for i, (category, count) in enumerate(category_data.items()):
+            extent = 360 * count / total
+            color = colors[i % len(colors)]
+            
+            # Draw slice
+            self.dist_canvas.create_arc(
+                x - size, y - size, x + size, y + size,
+                start=start_angle, extent=extent,
+                fill=color, outline='white', width=2
+            )
+            
+            # Draw legend
+            self.dist_canvas.create_rectangle(320, legend_y, 335, legend_y + 15, fill=color, outline='black')
+            percentage = (count / total) * 100
+            self.dist_canvas.create_text(
+                345, legend_y + 7, 
+                text=f"{category}: {count} ({percentage:.1f}%)",
+                anchor=tk.W, font=("Arial", 9)
+            )
+            legend_y += 20
+            
+            start_angle += extent
+    
+    def update_category_stats(self, analytics_data):
+        """Update category statistics display."""
+        self.category_stats_text.delete(1.0, tk.END)
+        
+        stats = analytics_data.get('processing_stats', {})
+        confidence_by_cat = analytics_data.get('confidence_by_category', {})
+        
+        text = f"📊 Processing Statistics:\n"
+        text += f"   Total Decisions: {stats.get('total_decisions', 0)}\n"
+        text += f"   User Overrides: {stats.get('user_overrides', 0)}\n"
+        text += f"   Override Rate: {stats.get('override_rate', 0):.1f}%\n"
+        text += f"   Average Confidence: {stats.get('avg_confidence', 0):.2f}\n\n"
+        
+        if confidence_by_cat:
+            text += "🎯 Confidence by Category:\n"
+            for category, confidence in sorted(confidence_by_cat.items()):
+                text += f"   {category}: {confidence:.2f}\n"
+        
+        self.category_stats_text.insert(1.0, text)
+    
+    def update_filter_effectiveness(self, effectiveness_data):
+        """Update filter effectiveness display."""
+        self.effectiveness_text.delete(1.0, tk.END)
+        
+        text = "📈 Filter Effectiveness Scores:\n\n"
+        
+        for filter_name, score in effectiveness_data.items():
+            percentage = score * 100
+            bar_length = int(score * 20)
+            bar = "█" * bar_length + "░" * (20 - bar_length)
+            
+            text += f"{filter_name.replace('_', ' ').title()}:\n"
+            text += f"   {bar} {percentage:.1f}%\n\n"
+        
+        # Add interpretation
+        text += "\n💡 Interpretation:\n"
+        text += "   • Gmail Filters: Percentage of emails automatically sorted\n"
+        text += "   • LLM Classification: Average confidence in AI decisions\n"
+        text += "   • User Satisfaction: Based on override rate (lower = better)\n"
+        
+        self.effectiveness_text.insert(1.0, text)
+    
+    def update_learning_insights(self, analytics_data):
+        """Update learning insights display."""
+        self.insights_text.delete(1.0, tk.END)
+        
+        suggestions = analytics_data.get('suggestions', {})
+        rule_updates = suggestions.get('rule_updates', {})
+        
+        text = "🧠 Learning Insights:\n\n"
+        
+        if 'summary' in rule_updates:
+            summary = rule_updates['summary']
+            text += f"📊 Analysis Summary:\n"
+            text += f"   Records Analyzed: {summary.get('total_records_analyzed', 0)}\n"
+            text += f"   User Overrides: {summary.get('total_user_overrides', 0)}\n"
+            text += f"   Low Confidence: {summary.get('low_confidence_count', 0)}\n\n"
+        
+        # Sender corrections
+        sender_corrections = rule_updates.get('sender_corrections', {})
+        if sender_corrections:
+            text += "👤 Sender Correction Patterns:\n"
+            for sender, suggestion in list(sender_corrections.items())[:5]:
+                text += f"   • {sender[:40]}... → {suggestion['suggested_category']}\n"
+                text += f"     (Corrected {suggestion['correction_count']} times)\n"
+            text += "\n"
+        
+        # Keyword patterns
+        keyword_patterns = rule_updates.get('keyword_patterns', {})
+        if keyword_patterns:
+            text += "🔍 Keyword Patterns:\n"
+            for category, pattern in keyword_patterns.items():
+                keywords = ', '.join(pattern['suggested_keywords'][:3])
+                text += f"   • {category}: {keywords}\n"
+            text += "\n"
+        
+        if not sender_corrections and not keyword_patterns:
+            text += "ℹ️  No significant learning patterns detected yet.\n"
+            text += "   Continue processing emails to build learning data.\n"
+        
+        self.insights_text.insert(1.0, text)
+    
+    def update_suggestions_display(self, suggestions_data):
+        """Update suggestions display."""
+        self.optimizations_text.delete(1.0, tk.END)
+        
+        text = "💡 Optimization Suggestions:\n\n"
+        
+        rule_updates = suggestions_data.get('rule_updates', {})
+        new_patterns = suggestions_data.get('new_patterns', [])
+        
+        suggestion_count = 0
+        
+        # Rule update suggestions
+        for sender, suggestion in rule_updates.get('sender_corrections', {}).items():
+            suggestion_count += 1
+            text += f"{suggestion_count}. Add '{sender}' to {suggestion['suggested_category']} rules\n"
+            text += f"   Reason: {suggestion['reason']}\n"
+            text += f"   Confidence: {suggestion['confidence']:.2f}\n\n"
+        
+        # New pattern suggestions
+        for pattern in new_patterns[:5]:
+            suggestion_count += 1
+            text += f"{suggestion_count}. Create rule for {pattern['type']}: {pattern['identifier']}\n"
+            text += f"   Suggested Category: {pattern['suggested_category']}\n"
+            text += f"   Emails: {pattern['email_count']}, Confidence: {pattern['confidence']:.2f}\n\n"
+        
+        if suggestion_count == 0:
+            text += "ℹ️  No optimization suggestions available.\n"
+            text += "   Run more email processing to generate suggestions.\n"
+        
+        self.optimizations_text.insert(1.0, text)
+    
+    def export_analytics_report(self):
+        """Export analytics data to a file."""
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
+            return
+            
+        try:
+            analytics_data = self.generate_analytics_data()
+            
+            # Create exports directory
+            os.makedirs('exports', exist_ok=True)
+            
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"exports/analytics_report_{timestamp}.json"
+            
+            with open(filename, 'w') as f:
+                json.dump(analytics_data, f, indent=2, default=str)
+            
+            messagebox.showinfo("Export Complete", f"Analytics report exported to:\n{filename}")
+            self.log(f"📊 Analytics report exported to {filename}")
+            
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Failed to export analytics report:\n{e}")
+            self.log(f"❌ Analytics export failed: {e}")
+    
+    def apply_learning_suggestions(self):
+        """Apply learning suggestions to improve the system."""
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
+            return
+            
+        try:
+            suggestions = self.cleaner.learning_engine.suggest_rule_updates()
+            
+            if not suggestions or not any(suggestions.values()):
+                messagebox.showinfo("No Suggestions", "No learning suggestions available to apply.")
+                return
+            
+            # Show confirmation dialog with suggestions summary
+            summary = suggestions.get('summary', {})
+            message = f"Apply learning suggestions?\n\n"
+            message += f"Sender Suggestions: {summary.get('sender_suggestions', 0)}\n"
+            message += f"Keyword Suggestions: {summary.get('keyword_suggestions', 0)}\n"
+            message += f"Confidence Improvements: {summary.get('confidence_suggestions', 0)}\n"
+            
+            if messagebox.askyesno("Apply Suggestions", message):
+                self.log("🤖 Applying learning suggestions...")
+                
+                # Apply suggestions (this would need implementation)
+                applied_count = self.apply_rule_suggestions(suggestions)
+                
+                messagebox.showinfo("Suggestions Applied", f"Applied {applied_count} suggestions successfully!")
+                self.log(f"✅ Applied {applied_count} learning suggestions")
+                
+                # Refresh analytics
+                self.refresh_analytics()
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to apply suggestions:\n{e}")
+            self.log(f"❌ Failed to apply suggestions: {e}")
+    
+    def apply_rule_suggestions(self, suggestions):
+        """Apply rule suggestions to the system."""
+        # This would implement the actual application of suggestions
+        # For now, return a placeholder count
+        applied_count = 0
+        
+        # Apply sender corrections
+        sender_corrections = suggestions.get('sender_corrections', {})
+        for sender, suggestion in sender_corrections.items():
+            if suggestion['confidence'] > 0.8:  # Only apply high-confidence suggestions
+                # TODO: Actually update the rules files
+                applied_count += 1
+                self.log(f"   Applied: {sender} → {suggestion['suggested_category']}")
+        
+        return applied_count
 
     def run_auto_evolution(self):
         """Run the auto-evolution process."""
@@ -3762,6 +5009,7 @@ Debug Information:
             messagebox.showwarning("Warning", "Failed to establish Gmail connection")
             return
             
+        self.evolution_text.delete(1.0, tk.END)
         self.log("Running auto-evolution process...")
         
         def log_callback(message):

@@ -11,6 +11,7 @@ from gmail_lm_cleaner import GmailLMCleaner
 from gmail_api_utils import GmailEmailManager, get_gmail_service
 import audit_tool
 from cron_utils import CronScheduler # Import CronScheduler
+import email_cleanup
 
 SETTINGS_PATH = "config/settings.json"
 DEFAULT_LOG_FILE = "automation.log"
@@ -246,6 +247,54 @@ def process_new_emails_batch(gmail_cleaner, email_manager, batch_size=50):
         logger.error(f"Error during real-time email processing batch retrieval: {e}")
         logger.debug(traceback.format_exc())
 
+def run_email_cleanup(gmail_service, settings_path):
+    """Run email cleanup based on retention policies."""
+    logger = get_logger(__name__)
+    logger.info("Starting scheduled email cleanup process.")
+    
+    try:
+        # Load current settings
+        settings = load_settings(settings_path)
+        
+        # Identify emails for cleanup
+        eligible_emails = email_cleanup.identify_emails_for_cleanup(settings, gmail_service)
+        
+        total_eligible = sum(len(emails) for emails in eligible_emails.values())
+        if total_eligible == 0:
+            logger.info("No emails eligible for cleanup based on retention policies.")
+            return True
+        
+        logger.info(f"Found {total_eligible} emails eligible for cleanup: "
+                   f"TRASH={len(eligible_emails.get('TRASH', []))}, "
+                   f"DELETE={len(eligible_emails.get('DELETE', []))}, "
+                   f"ARCHIVE={len(eligible_emails.get('ARCHIVE', []))}")
+        
+        # Execute cleanup actions
+        results = email_cleanup.cleanup_emails(
+            settings, 
+            gmail_service, 
+            dry_run=settings.get("email_cleanup", {}).get("dry_run", False)
+        )
+        
+        # Log results
+        if results:
+            total_actions = results.get('TRASH', 0) + results.get('DELETE', 0) + results.get('ARCHIVE', 0)
+            error_count = results.get('ERRORS', 0)
+            logger.info(f"Email cleanup completed: {total_actions} actions performed, {error_count} errors")
+            
+            if error_count > 0:
+                logger.warning(f"Some cleanup actions failed. Check logs for details.")
+                return error_count == 0  # Return True only if no errors
+            return True
+        else:
+            logger.error("Email cleanup execution returned no results")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error during email cleanup: {e}")
+        logger.debug(traceback.format_exc())
+        return False
+
 def main():
     # Load settings
     try:
@@ -300,7 +349,8 @@ def main():
     # Use reasonable cron expressions for the jobs
     jobs_config = {
         "batch_analysis": "0 3 * * *",  # Daily at 3 AM UTC
-        "realtime_processing": "*/5 * * * *" # Every 5 minutes
+        "realtime_processing": "*/5 * * * *", # Every 5 minutes
+        "email_cleanup": "0 2 * * 0"  # Weekly on Sunday at 2 AM UTC
     }
     export_dir = settings.get("paths", {}).get("exports", "exports")
     rules_dir = settings.get("paths", {}).get("rules", "rules") # Not directly used in main loop, but good to keep
@@ -324,6 +374,8 @@ def main():
                         success = run_batch_analysis(gmail_cleaner, export_dir, SETTINGS_PATH)
                     elif job.name == "realtime_processing":
                         success = run_realtime_processing(gmail_cleaner, email_manager, batch_size=50)
+                    elif job.name == "email_cleanup":
+                        success = run_email_cleanup(gmail_service, SETTINGS_PATH)
                     else:
                         logger.warning(f"Unknown job '{job.name}' found in scheduler. Skipping.")
                         continue
