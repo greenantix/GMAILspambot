@@ -152,10 +152,16 @@ Be specific and actionable in your recommendations."""
         }
         
         try:
-            response = requests.post(self.url, json=payload, timeout=60)
+            response = requests.post(self.url, json=payload, timeout=300)  # 5 minutes
             response.raise_for_status()
             result = response.json()
             return result["choices"][0]["message"]["content"]
+        except requests.exceptions.Timeout:
+            logging.error("LM Studio API timeout - repository too large for analysis")
+            return "Analysis timed out: Repository too large for LLM processing"
+        except requests.exceptions.HTTPError as e:
+            logging.error(f"LM Studio HTTP error: {e.response.status_code} - {e.response.text}")
+            return f"LM Studio API error: {e.response.status_code}"
         except Exception as e:
             logging.error(f"LM Studio API error: {e}")
             return f"Analysis failed: {e}"
