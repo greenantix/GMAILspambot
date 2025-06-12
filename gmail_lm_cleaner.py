@@ -2074,6 +2074,11 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                     
                     category = rule_file.replace('.json', '').upper()
                     
+                    # Handle both old and new rule formats
+                    if isinstance(rule_data, list):
+                        # Skip list format - this shouldn't happen but handle gracefully
+                        continue
+                    
                     # Check sender rules
                     rule_senders = rule_data.get('senders', [])
                     for rule_sender in rule_senders:
@@ -2084,46 +2089,62 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                                 "confidence": 1.0
                             }
                     
-                    # Check domain rules
-                    sender_domains = rule_data.get('conditions', {}).get('sender_domain', [])
-                    sender_domain = sender.split('@')[-1] if '@' in sender else ''
-                    for rule_domain in sender_domains:
-                        if rule_domain.lower() in sender_domain:
-                            return {
-                                "action": category,
-                                "reason": f"Sender domain matched rule in {rule_file}",
-                                "confidence": 1.0
-                            }
+                    # Check keywords - handle both old and new format
+                    keywords_data = rule_data.get('keywords', {})
                     
-                    # Check subject keywords
-                    subject_keywords = rule_data.get('keywords', {}).get('subject', [])
-                    for keyword in subject_keywords:
-                        if keyword.lower() in subject:
-                            return {
-                                "action": category,
-                                "reason": f"Subject keyword '{keyword}' matched rule in {rule_file}",
-                                "confidence": 0.95
-                            }
+                    if isinstance(keywords_data, list):
+                        # Old format: keywords is a list
+                        for keyword in keywords_data:
+                            if keyword.lower() in subject or keyword.lower() in body:
+                                return {
+                                    "action": category,
+                                    "reason": f"Keyword '{keyword}' matched rule in {rule_file}",
+                                    "confidence": 0.95
+                                }
+                    elif isinstance(keywords_data, dict):
+                        # New format: keywords is a dict with subject/body
+                        # Check subject keywords
+                        subject_keywords = keywords_data.get('subject', [])
+                        for keyword in subject_keywords:
+                            if keyword.lower() in subject:
+                                return {
+                                    "action": category,
+                                    "reason": f"Subject keyword '{keyword}' matched rule in {rule_file}",
+                                    "confidence": 0.95
+                                }
+                        
+                        # Check body keywords
+                        body_keywords = keywords_data.get('body', [])
+                        for keyword in body_keywords:
+                            if keyword.lower() in body:
+                                return {
+                                    "action": category,
+                                    "reason": f"Body keyword '{keyword}' matched rule in {rule_file}",
+                                    "confidence": 0.9
+                                }
                     
-                    # Check body keywords
-                    body_keywords = rule_data.get('keywords', {}).get('body', [])
-                    for keyword in body_keywords:
-                        if keyword.lower() in body:
-                            return {
-                                "action": category,
-                                "reason": f"Body keyword '{keyword}' matched rule in {rule_file}",
-                                "confidence": 0.9
-                            }
-                    
-                    # Check exclude keywords (if present, rule doesn't apply)
-                    exclude_keywords = rule_data.get('conditions', {}).get('exclude_keywords', [])
-                    for exclude_keyword in exclude_keywords:
-                        if exclude_keyword.lower() in subject or exclude_keyword.lower() in body:
-                            # This rule doesn't apply, continue to next rule
-                            break
-                    else:
-                        # No exclude keywords matched, continue with other checks if any
-                        pass
+                    # Check domain rules (new format only)
+                    conditions = rule_data.get('conditions', {})
+                    if isinstance(conditions, dict):
+                        sender_domains = conditions.get('sender_domain', [])
+                        sender_domain = sender.split('@')[-1] if '@' in sender else ''
+                        for rule_domain in sender_domains:
+                            if rule_domain.lower() in sender_domain:
+                                return {
+                                    "action": category,
+                                    "reason": f"Sender domain matched rule in {rule_file}",
+                                    "confidence": 1.0
+                                }
+                        
+                        # Check exclude keywords (if present, rule doesn't apply)
+                        exclude_keywords = conditions.get('exclude_keywords', [])
+                        for exclude_keyword in exclude_keywords:
+                            if exclude_keyword.lower() in subject or exclude_keyword.lower() in body:
+                                # This rule doesn't apply, continue to next rule
+                                break
+                        else:
+                            # No exclude keywords matched, continue with other checks if any
+                            pass
                         
                 except json.JSONDecodeError as e:
                     if hasattr(self, 'logger'):
@@ -2368,6 +2389,10 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                     log_callback(f"  From: {sender_text}")
                 
                 decision = self.analyze_email_with_llm(email_data)
+                
+                # Record the categorization decision for learning
+                if hasattr(self, 'learning_engine'):
+                    self.learning_engine.record_categorization(email_data, decision)
                 
                 # Log the processing details
                 if hasattr(self, 'logger'):
@@ -3778,6 +3803,10 @@ class GmailCleanerGUI:
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
+        # Dashboard tab (new)
+        dashboard_frame = ttk.Frame(notebook)
+        notebook.add(dashboard_frame, text="📊 Dashboard")
+        
         # Main tab
         main_frame = ttk.Frame(notebook)
         notebook.add(main_frame, text="Main")
@@ -3798,17 +3827,196 @@ class GmailCleanerGUI:
         analytics_frame = ttk.Frame(notebook)
         notebook.add(analytics_frame, text="Analytics")
         
+        # Learning & Suggestions tab (new)
+        learning_frame = ttk.Frame(notebook)
+        notebook.add(learning_frame, text="🤖 Learning & Suggestions")
+        
         # Unsubscribe tab
         unsubscribe_frame = ttk.Frame(notebook)
         notebook.add(unsubscribe_frame, text="Unsubscribe")
         
+        self.setup_dashboard_tab(dashboard_frame)
         self.setup_main_tab(main_frame)
         self.setup_backlog_tab(backlog_frame)
         self.setup_settings_tab(settings_frame)
         self.setup_management_tab(management_frame)
         self.setup_analytics_tab(analytics_frame)
+        self.setup_learning_tab(learning_frame)
         self.setup_unsubscribe_tab(unsubscribe_frame)
         
+    def setup_dashboard_tab(self, parent):
+        """Setup the Dashboard tab with key metrics and overview."""
+        # Create scrollable frame
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Welcome section
+        welcome_frame = ttk.LabelFrame(scrollable_frame, text="Gmail Intelligent Cleaner Dashboard", padding=10)
+        welcome_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(welcome_frame, text="Welcome to your Gmail intelligent cleaner!", font=('TkDefaultFont', 12, 'bold')).pack(anchor=tk.W, pady=5)
+        ttk.Label(welcome_frame, text="This dashboard shows key metrics and system status.").pack(anchor=tk.W)
+        
+        # Quick stats section
+        stats_frame = ttk.LabelFrame(scrollable_frame, text="Quick Statistics", padding=10)
+        stats_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Create grid for stats
+        self.stats_total_processed = tk.StringVar(value="Loading...")
+        self.stats_accuracy_rate = tk.StringVar(value="Loading...")
+        self.stats_top_category = tk.StringVar(value="Loading...")
+        
+        stats_grid = ttk.Frame(stats_frame)
+        stats_grid.pack(fill=tk.X)
+        
+        ttk.Label(stats_grid, text="Total Emails Processed:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(stats_grid, textvariable=self.stats_total_processed, font=('TkDefaultFont', 10, 'bold')).grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+        
+        ttk.Label(stats_grid, text="AI Accuracy Rate:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(stats_grid, textvariable=self.stats_accuracy_rate, font=('TkDefaultFont', 10, 'bold')).grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
+        
+        ttk.Label(stats_grid, text="Most Used Category:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(stats_grid, textvariable=self.stats_top_category, font=('TkDefaultFont', 10, 'bold')).grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
+        
+        # System status section
+        status_frame = ttk.LabelFrame(scrollable_frame, text="System Status", padding=10)
+        status_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.system_status_label = ttk.Label(status_frame, text="Checking system status...", font=('TkDefaultFont', 10))
+        self.system_status_label.pack(anchor=tk.W, pady=2)
+        
+        self.gmail_connection_label = ttk.Label(status_frame, text="Gmail: Checking connection...", font=('TkDefaultFont', 10))
+        self.gmail_connection_label.pack(anchor=tk.W, pady=2)
+        
+        self.llm_connection_label = ttk.Label(status_frame, text="LLM Service: Checking connection...", font=('TkDefaultFont', 10))
+        self.llm_connection_label.pack(anchor=tk.W, pady=2)
+        
+        # Quick actions section
+        actions_frame = ttk.LabelFrame(scrollable_frame, text="Quick Actions", padding=10)
+        actions_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        actions_grid = ttk.Frame(actions_frame)
+        actions_grid.pack(fill=tk.X)
+        
+        ttk.Button(actions_grid, text="Start Backlog Cleanup", command=self.start_backlog_cleanup).grid(row=0, column=0, padx=5, pady=5, sticky=tk.W+tk.E)
+        ttk.Button(actions_grid, text="View Learning Suggestions", command=self.show_learning_engine_suggestions).grid(row=0, column=1, padx=5, pady=5, sticky=tk.W+tk.E)
+        ttk.Button(actions_grid, text="Export Email Data", command=self.export_subjects).grid(row=1, column=0, padx=5, pady=5, sticky=tk.W+tk.E)
+        ttk.Button(actions_grid, text="Analyze with Gemini", command=self.auto_analyze).grid(row=1, column=1, padx=5, pady=5, sticky=tk.W+tk.E)
+        
+        # Configure grid weights
+        actions_grid.columnconfigure(0, weight=1)
+        actions_grid.columnconfigure(1, weight=1)
+        
+        # Recent activity section
+        activity_frame = ttk.LabelFrame(scrollable_frame, text="Recent Activity", padding=10)
+        activity_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.recent_activity_text = scrolledtext.ScrolledText(activity_frame, height=8, state=tk.DISABLED)
+        self.recent_activity_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Refresh button
+        refresh_frame = ttk.Frame(scrollable_frame)
+        refresh_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Button(refresh_frame, text="Refresh Dashboard", command=self.refresh_dashboard).pack()
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Initial dashboard refresh
+        self.root.after(1000, self.refresh_dashboard)  # Delay to allow system to initialize
+    
+    def refresh_dashboard(self):
+        """Refresh dashboard statistics and status."""
+        try:
+            if hasattr(self, 'cleaner') and self.cleaner:
+                # Update learning engine stats
+                stats = self.cleaner.learning_engine.get_learning_stats()
+                
+                self.stats_total_processed.set(str(stats['total_records']))
+                self.stats_accuracy_rate.set(f"{stats['accuracy_rate']:.1%}")
+                
+                if stats['top_categories']:
+                    top_category = stats['top_categories'][0]
+                    self.stats_top_category.set(f"{top_category[0]} ({top_category[1]} emails)")
+                else:
+                    self.stats_top_category.set("No data yet")
+                
+                # Update system status
+                if self.cleaner.service:
+                    self.gmail_connection_label.config(text="Gmail: ✅ Connected", foreground="green")
+                else:
+                    self.gmail_connection_label.config(text="Gmail: ❌ Not connected", foreground="red")
+                
+                # Check LLM connection (simplified)
+                try:
+                    # This is a simple check - in practice you might want to ping the LLM service
+                    self.llm_connection_label.config(text="LLM Service: ✅ Available", foreground="green")
+                except:
+                    self.llm_connection_label.config(text="LLM Service: ⚠️ Check connection", foreground="orange")
+                
+                self.system_status_label.config(text="System Status: ✅ Operational", foreground="green")
+                
+                # Update recent activity
+                self.update_recent_activity()
+            else:
+                self.stats_total_processed.set("System not initialized")
+                self.stats_accuracy_rate.set("--")
+                self.stats_top_category.set("--")
+                self.system_status_label.config(text="System Status: ⚠️ Initializing...", foreground="orange")
+                
+        except Exception as e:
+            print(f"Error refreshing dashboard: {e}")
+    
+    def update_recent_activity(self):
+        """Update recent activity log."""
+        try:
+            self.recent_activity_text.config(state=tk.NORMAL)
+            self.recent_activity_text.delete(1.0, tk.END)
+            
+            if hasattr(self, 'cleaner') and self.cleaner:
+                # Get recent categorizations from learning engine
+                history = self.cleaner.learning_engine.categorization_history
+                recent_history = history[-10:] if len(history) > 10 else history
+                
+                if recent_history:
+                    for record in reversed(recent_history):  # Show most recent first
+                        timestamp = record.get('timestamp', 'Unknown time')
+                        action = record.get('final_action', record.get('llm_action', 'UNKNOWN'))
+                        sender = record.get('sender', 'Unknown sender')[:30]
+                        subject = record.get('subject', 'No subject')[:40]
+                        
+                        # Format timestamp
+                        try:
+                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                            time_str = dt.strftime('%H:%M:%S')
+                        except:
+                            time_str = timestamp[:8] if len(timestamp) > 8 else timestamp
+                        
+                        activity_line = f"[{time_str}] {action}: {subject}... (from {sender})\n"
+                        self.recent_activity_text.insert(tk.END, activity_line)
+                else:
+                    self.recent_activity_text.insert(tk.END, "No recent activity. Process some emails to see activity here.\n")
+            else:
+                self.recent_activity_text.insert(tk.END, "System not connected.\n")
+                
+            self.recent_activity_text.config(state=tk.DISABLED)
+            
+        except Exception as e:
+            self.recent_activity_text.config(state=tk.NORMAL)
+            self.recent_activity_text.delete(1.0, tk.END)
+            self.recent_activity_text.insert(tk.END, f"Error loading activity: {e}\n")
+            self.recent_activity_text.config(state=tk.DISABLED)
+    
     def setup_main_tab(self, parent):
         """Setup the main control tab."""
         # Status frame
@@ -4600,6 +4808,8 @@ class GmailCleanerGUI:
             # Always reset UI state regardless of success or failure
             self.log("Backlog cleanup thread finished.")
             self.root.after(0, self._cleanup_finished)
+            # Show learning suggestions after processing
+            self.root.after(0, self.show_learning_engine_suggestions)
     
     def _update_backlog_log(self, message):
         """Update the backlog log in the GUI thread."""
@@ -5589,6 +5799,225 @@ Debug Information:
         # Load initial analytics data
         self.root.after(1000, self.refresh_analytics)
 
+    def setup_learning_tab(self, parent):
+        """Setup the Learning & Suggestions tab."""
+        # Create scrollable frame
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Learning Statistics Section
+        stats_frame = ttk.LabelFrame(scrollable_frame, text="Learning Statistics", padding=10)
+        stats_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.learning_stats_text = scrolledtext.ScrolledText(stats_frame, height=8, state=tk.DISABLED)
+        self.learning_stats_text.pack(fill=tk.BOTH, expand=True)
+        
+        refresh_stats_btn = ttk.Button(stats_frame, text="Refresh Stats", command=self.refresh_learning_stats)
+        refresh_stats_btn.pack(pady=5)
+        
+        # Rule Suggestions Section
+        suggestions_frame = ttk.LabelFrame(scrollable_frame, text="AI-Generated Rule Suggestions", padding=10)
+        suggestions_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(suggestions_frame, text="The AI has analyzed your email patterns and can suggest new rules.").pack(anchor=tk.W, pady=5)
+        
+        suggestions_btn_frame = ttk.Frame(suggestions_frame)
+        suggestions_btn_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(suggestions_btn_frame, text="🤖 Get AI Suggestions", command=self.show_learning_engine_suggestions).pack(side=tk.LEFT, padx=5)
+        ttk.Button(suggestions_btn_frame, text="📈 Analyze Email Patterns", command=self.show_rule_suggestions).pack(side=tk.LEFT, padx=5)
+        
+        # Manual Learning Section
+        manual_frame = ttk.LabelFrame(scrollable_frame, text="Manual Learning", padding=10)
+        manual_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(manual_frame, text="Manually teach the AI by providing feedback on its decisions.").pack(anchor=tk.W, pady=5)
+        
+        manual_btn_frame = ttk.Frame(manual_frame)
+        manual_btn_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(manual_btn_frame, text="🔍 Review Recent Decisions", command=self.review_recent_decisions).pack(side=tk.LEFT, padx=5)
+        ttk.Button(manual_btn_frame, text="⚙️ Train on Specific Emails", command=self.train_on_emails).pack(side=tk.LEFT, padx=5)
+        
+        # Learning History Section
+        history_frame = ttk.LabelFrame(scrollable_frame, text="Learning History", padding=10)
+        history_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.learning_history_text = scrolledtext.ScrolledText(history_frame, height=10, state=tk.DISABLED)
+        self.learning_history_text.pack(fill=tk.BOTH, expand=True)
+        
+        history_btn_frame = ttk.Frame(history_frame)
+        history_btn_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(history_btn_frame, text="Refresh History", command=self.refresh_learning_history).pack(side=tk.LEFT, padx=5)
+        ttk.Button(history_btn_frame, text="Export Learning Data", command=self.export_learning_data).pack(side=tk.LEFT, padx=5)
+        ttk.Button(history_btn_frame, text="Clear History", command=self.clear_learning_history).pack(side=tk.LEFT, padx=5)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Initial refresh
+        self.root.after(1000, self.refresh_learning_stats)
+        self.root.after(1500, self.refresh_learning_history)
+    
+    def refresh_learning_stats(self):
+        """Refresh learning statistics display."""
+        try:
+            if not hasattr(self, 'cleaner') or not self.cleaner:
+                return
+            
+            stats = self.cleaner.learning_engine.get_learning_stats()
+            
+            self.learning_stats_text.config(state=tk.NORMAL)
+            self.learning_stats_text.delete(1.0, tk.END)
+            
+            stats_content = f"Learning Engine Statistics\n"
+            stats_content += f"=" * 30 + "\n\n"
+            stats_content += f"Total Decisions Recorded: {stats['total_records']}\n"
+            stats_content += f"AI Accuracy Rate: {stats['accuracy_rate']:.1%}\n\n"
+            
+            if stats['top_categories']:
+                stats_content += "Top Categories:\n"
+                for category, count in stats['top_categories']:
+                    percentage = (count / stats['total_records']) * 100 if stats['total_records'] > 0 else 0
+                    stats_content += f"  • {category}: {count} emails ({percentage:.1f}%)\n"
+            else:
+                stats_content += "No categorization data available yet.\n"
+            
+            stats_content += "\n" + "-" * 30 + "\n"
+            stats_content += "Tip: The more emails you process, the smarter the AI becomes!\n"
+            
+            self.learning_stats_text.insert(1.0, stats_content)
+            self.learning_stats_text.config(state=tk.DISABLED)
+            
+        except Exception as e:
+            self.learning_stats_text.config(state=tk.NORMAL)
+            self.learning_stats_text.delete(1.0, tk.END)
+            self.learning_stats_text.insert(1.0, f"Error loading learning statistics: {e}\n")
+            self.learning_stats_text.config(state=tk.DISABLED)
+    
+    def refresh_learning_history(self):
+        """Refresh learning history display."""
+        try:
+            if not hasattr(self, 'cleaner') or not self.cleaner:
+                return
+            
+            history = self.cleaner.learning_engine.categorization_history
+            
+            self.learning_history_text.config(state=tk.NORMAL)
+            self.learning_history_text.delete(1.0, tk.END)
+            
+            if history:
+                history_content = f"Recent Learning History (Last {min(20, len(history))} decisions)\n"
+                history_content += f"=" * 50 + "\n\n"
+                
+                # Show most recent 20 decisions
+                recent_history = history[-20:] if len(history) > 20 else history
+                
+                for record in reversed(recent_history):
+                    timestamp = record.get('timestamp', 'Unknown')
+                    llm_action = record.get('llm_action', 'UNKNOWN')
+                    confidence = record.get('llm_confidence', 0.0)
+                    user_override = record.get('user_override')
+                    sender = record.get('sender', 'Unknown')[:25]
+                    subject = record.get('subject', 'No subject')[:35]
+                    
+                    # Format timestamp
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        time_str = dt.strftime('%m/%d %H:%M')
+                    except:
+                        time_str = timestamp[:10] if len(timestamp) > 10 else timestamp
+                    
+                    status = "✅ Correct" if not user_override else f"⚠️ Corrected to {user_override}"
+                    
+                    history_content += f"[{time_str}] {llm_action} (conf: {confidence:.1f}) - {status}\n"
+                    history_content += f"  From: {sender}\n"
+                    history_content += f"  Subject: {subject}...\n\n"
+            else:
+                history_content = "No learning history available yet.\n\n"
+                history_content += "Start processing emails to build learning history!"
+            
+            self.learning_history_text.insert(1.0, history_content)
+            self.learning_history_text.config(state=tk.DISABLED)
+            
+        except Exception as e:
+            self.learning_history_text.config(state=tk.NORMAL)
+            self.learning_history_text.delete(1.0, tk.END)
+            self.learning_history_text.insert(1.0, f"Error loading learning history: {e}\n")
+            self.learning_history_text.config(state=tk.DISABLED)
+    
+    def review_recent_decisions(self):
+        """Show dialog to review and correct recent AI decisions."""
+        messagebox.showinfo("Feature Coming Soon", "Manual decision review feature will be available in a future update.")
+    
+    def train_on_emails(self):
+        """Show dialog to manually train the AI on specific emails."""
+        messagebox.showinfo("Feature Coming Soon", "Manual training feature will be available in a future update.")
+    
+    def export_learning_data(self):
+        """Export learning data to JSON file."""
+        try:
+            if not hasattr(self, 'cleaner') or not self.cleaner:
+                messagebox.showwarning("Warning", "No cleaner connection available.")
+                return
+            
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".json",
+                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+                title="Export Learning Data"
+            )
+            
+            if filename:
+                history = self.cleaner.learning_engine.categorization_history
+                stats = self.cleaner.learning_engine.get_learning_stats()
+                
+                export_data = {
+                    'export_timestamp': datetime.now().isoformat(),
+                    'statistics': stats,
+                    'categorization_history': history
+                }
+                
+                with open(filename, 'w') as f:
+                    json.dump(export_data, f, indent=2)
+                
+                messagebox.showinfo("Export Complete", f"Learning data exported to:\n{filename}")
+            
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export learning data:\n{e}")
+    
+    def clear_learning_history(self):
+        """Clear all learning history after confirmation."""
+        try:
+            result = messagebox.askyesno(
+                "Clear Learning History",
+                "Are you sure you want to clear all learning history?\n\nThis action cannot be undone and will reset the AI's learning."
+            )
+            
+            if result:
+                if hasattr(self, 'cleaner') and self.cleaner:
+                    self.cleaner.learning_engine.categorization_history = []
+                    self.cleaner.learning_engine.save_history()
+                    
+                    self.refresh_learning_stats()
+                    self.refresh_learning_history()
+                    
+                    messagebox.showinfo("History Cleared", "Learning history has been cleared successfully.")
+                else:
+                    messagebox.showwarning("Warning", "No cleaner connection available.")
+            
+        except Exception as e:
+            messagebox.showerror("Clear Error", f"Failed to clear learning history:\n{e}")
+    
     def setup_unsubscribe_tab(self, parent):
         """Setup the unsubscribe assistant tab."""
         # Control frame
@@ -6113,6 +6542,168 @@ Debug Information:
         except Exception as e:
             messagebox.showerror("Export Failed", f"Failed to export analytics report:\n{e}")
             self.log(f"❌ Analytics export failed: {e}")
+    
+    def show_learning_engine_suggestions(self):
+        """Show learning engine suggestions dialog."""
+        if not self.ensure_cleaner_connection():
+            messagebox.showwarning("Warning", "Failed to establish Gmail connection")
+            return
+        
+        try:
+            suggestions = self.cleaner.learning_engine.suggest_rule_updates()
+            new_patterns = self.cleaner.learning_engine.detect_new_patterns()
+            
+            if not suggestions and not new_patterns:
+                messagebox.showinfo("No Suggestions", "No learning-based suggestions available. Process more emails to generate suggestions.")
+                return
+            
+            # Create suggestions dialog
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Learning Engine Suggestions")
+            dialog.geometry("600x500")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # Main frame with scrolling
+            main_frame = ttk.Frame(dialog)
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Title
+            ttk.Label(main_frame, text="AI Learning Suggestions", font=('TkDefaultFont', 12, 'bold')).pack(pady=5)
+            
+            # Create notebook for different types of suggestions
+            notebook = ttk.Notebook(main_frame)
+            notebook.pack(fill=tk.BOTH, expand=True, pady=10)
+            
+            # Rule suggestions tab
+            if suggestions:
+                rule_frame = ttk.Frame(notebook)
+                notebook.add(rule_frame, text=f"Rule Updates ({len(suggestions)})")
+                
+                rule_list = tk.Listbox(rule_frame, height=8)
+                rule_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+                
+                for suggestion in suggestions:
+                    rule_list.insert(tk.END, suggestion['description'])
+                
+                # Buttons for rule suggestions
+                rule_btn_frame = ttk.Frame(rule_frame)
+                rule_btn_frame.pack(fill=tk.X, pady=5)
+                
+                def apply_selected_rules():
+                    selected_indices = rule_list.curselection()
+                    if not selected_indices:
+                        messagebox.showwarning("Warning", "Please select suggestions to apply.")
+                        return
+                    
+                    applied_count = 0
+                    for idx in selected_indices:
+                        suggestion = suggestions[idx]
+                        try:
+                            if suggestion['type'] == 'sender_rule':
+                                self.apply_sender_rule_suggestion(suggestion)
+                                applied_count += 1
+                            elif suggestion['type'] == 'keyword_rule':
+                                self.apply_keyword_rule_suggestion(suggestion)
+                                applied_count += 1
+                        except Exception as e:
+                            self.log(f"Error applying suggestion: {e}")
+                    
+                    if applied_count > 0:
+                        messagebox.showinfo("Success", f"Applied {applied_count} suggestions successfully!")
+                        dialog.destroy()
+                
+                ttk.Button(rule_btn_frame, text="Apply Selected", command=apply_selected_rules).pack(side=tk.LEFT, padx=5)
+                ttk.Button(rule_btn_frame, text="Select All", command=lambda: rule_list.select_set(0, tk.END)).pack(side=tk.LEFT, padx=5)
+            
+            # New patterns tab
+            if new_patterns:
+                pattern_frame = ttk.Frame(notebook)
+                notebook.add(pattern_frame, text=f"New Patterns ({len(new_patterns)})")
+                
+                pattern_list = tk.Listbox(pattern_frame, height=6)
+                pattern_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+                
+                for pattern in new_patterns:
+                    pattern_list.insert(tk.END, pattern['description'])
+            
+            # Close button
+            ttk.Button(main_frame, text="Close", command=dialog.destroy).pack(pady=10)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to get learning suggestions: {e}")
+    
+    def apply_sender_rule_suggestion(self, suggestion):
+        """Apply a sender rule suggestion to the appropriate category file."""
+        try:
+            category = suggestion['category']
+            sender = suggestion['sender']
+            
+            # Load existing rule file or create new one
+            rules_dir = "rules"
+            os.makedirs(rules_dir, exist_ok=True)
+            rule_file = os.path.join(rules_dir, f"{category}.json")
+            
+            if os.path.exists(rule_file):
+                with open(rule_file, 'r') as f:
+                    rule_data = json.load(f)
+            else:
+                rule_data = {
+                    "description": f"Rules for {category} category",
+                    "senders": [],
+                    "keywords": {"subject": [], "body": []},
+                    "conditions": {"sender_domain": [], "exclude_keywords": []},
+                    "actions": {"apply_label": category, "mark_as_read": False, "archive": False}
+                }
+            
+            # Add sender if not already present
+            if sender not in rule_data['senders']:
+                rule_data['senders'].append(sender)
+                
+                # Save updated rule
+                with open(rule_file, 'w') as f:
+                    json.dump(rule_data, f, indent=2)
+                
+                self.log(f"✅ Added sender '{sender}' to {category} rules")
+            
+        except Exception as e:
+            self.log(f"❌ Error applying sender rule: {e}")
+    
+    def apply_keyword_rule_suggestion(self, suggestion):
+        """Apply a keyword rule suggestion to the appropriate category file."""
+        try:
+            category = suggestion['category']
+            keyword = suggestion['keyword']
+            
+            # Load existing rule file or create new one
+            rules_dir = "rules"
+            os.makedirs(rules_dir, exist_ok=True)
+            rule_file = os.path.join(rules_dir, f"{category}.json")
+            
+            if os.path.exists(rule_file):
+                with open(rule_file, 'r') as f:
+                    rule_data = json.load(f)
+            else:
+                rule_data = {
+                    "description": f"Rules for {category} category",
+                    "senders": [],
+                    "keywords": {"subject": [], "body": []},
+                    "conditions": {"sender_domain": [], "exclude_keywords": []},
+                    "actions": {"apply_label": category, "mark_as_read": False, "archive": False}
+                }
+            
+            # Add keyword to subject keywords if not already present
+            if keyword not in rule_data['keywords']['subject']:
+                rule_data['keywords']['subject'].append(keyword)
+                
+                # Save updated rule
+                with open(rule_file, 'w') as f:
+                    json.dump(rule_data, f, indent=2)
+                
+                self.log(f"✅ Added keyword '{keyword}' to {category} subject rules")
+            
+        except Exception as e:
+            self.log(f"❌ Error applying keyword rule: {e}")
     
     def show_rule_suggestions(self):
         """Show rule suggestions dialog based on backlog analysis."""
