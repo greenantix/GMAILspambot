@@ -1178,5 +1178,185 @@
     "llm_confidence": 1.0,
     "user_override": null,
     "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:43.274015",
+    "sender": "MyPanera <panera@m1.panerabread.com>",
+    "subject": "We\u2019ve missed you!",
+    "llm_action": "SHOPPING",
+    "llm_reason": "This is a promotional email from Panera, offering discounts and rewards for returning customers. It does not meet the criteria for INBOX or any other category.",
+    "llm_confidence": 0.9,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:44.317680",
+    "sender": "\"realtor.com\" <info@notifications.realtor.com>",
+    "subject": "Ben, 1 sold listing in Marion",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Sender matched rule in PERSONAL.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:45.336539",
+    "sender": "Redfin <listings@redfin.com>",
+    "subject": "A Cedar Rapids home for you at $220K, and 5 other updates",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:46.015430",
+    "sender": "Upgrade <email@e.upgrade.com>",
+    "subject": "Get ahead of your monthly payments",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword 'loan' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:46.739290",
+    "sender": "Boot Barn <bootbarn@p.bootbarn.com>",
+    "subject": "$10 Off Your Entire Order",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:47.650911",
+    "sender": "3 Bureau Credit Scores <info@send.youngpersonalloanman.com>",
+    "subject": "690 is an \u201cokay\u201d score. Check yours HERE \u2192",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:48.869401",
+    "sender": "Tony from TypingMind <support@typingmind.com>",
+    "subject": "Gemini 2.5 Pro 06-05,  Support MCP via streamable HTTP transport and more!",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:49.819878",
+    "sender": "Lisa <lisa@gbhproperty.com>",
+    "subject": "Re: Inventory Update at Lindale Manor",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Sender matched rule in PERSONAL.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:51.328205",
+    "sender": "GREENantix <perschek@gmail.com>",
+    "subject": "Re: Inventory Update at Lindale Manor",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Sender matched rule in PERSONAL.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:55.024581",
+    "sender": "Panera Bread <panera@m1.panerabread.com>",
+    "subject": "20% OFF Gift Cards starts now!",
+    "llm_action": "SHOPPING",
+    "llm_reason": "This is a promotional email offering a discount on gift cards. It does not meet the criteria for INBOX, PRIORITY, BILLS, NEWSLETTERS, SOCIAL, PERSONAL, or JUNK categories.",
+    "llm_confidence": 0.9,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:56.189815",
+    "sender": "\"realtor.com\" <info@notifications.realtor.com>",
+    "subject": "Ben, 2 Open Houses Coming Soon in Marion",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Sender matched rule in PERSONAL.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:57.236095",
+    "sender": "Guitar Center <promos@email.guitarcenter.com>",
+    "subject": "It\u2019s the last day for these savings",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:58.230338",
+    "sender": "Office Depot <officedepot@em.officedepot.com>",
+    "subject": "Save up to $20 on HP Ink & up to $50 on HP Toner with qualifying purchases",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:59.129634",
+    "sender": "UNTUCKit <untuckit@untuckit.com>",
+    "subject": "LAST CALL: $5 Two-Day Shipping For Father\u2019s Day",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:44:59.999392",
+    "sender": "Petco <Petco@e.petco.com>",
+    "subject": "Is pet insurance putting $$ back in your wallet?",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:45:00.751246",
+    "sender": "DXL <dxl@email.dxl.com>",
+    "subject": "Get 20% OFF\u2014In Time For Father\u2019s Day!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:45:01.374449",
+    "sender": "Lisa Smith <lisa@gbhproperty.com>",
+    "subject": "Inventory Update at Lindale Manor",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Sender matched rule in PERSONAL.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:45:02.433979",
+    "sender": "Medium Daily Digest <noreply@medium.com>",
+    "subject": "Three reasons why you need a local AI | Fabio Matricardi in Generative AI",
+    "llm_action": "NEWSLETTERS",
+    "llm_reason": "Sender matched rule in NEWSLETTERS.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "NEWSLETTERS"
   }
 ]

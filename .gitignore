@@ -90,3 +90,4 @@ rules/.initialized
 # Systemd and deployment files
 systemd_units/
 gmail-autonomy.logrotate
+logs/categorization_history.json
