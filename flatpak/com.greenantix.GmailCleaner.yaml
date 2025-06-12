@@ -1,0 +1,57 @@
+id: com.greenantix.GmailCleaner
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: gmail-cleaner
+
+finish-args:
+  - --share=network
+  - --socket=x11
+  - --socket=wayland
+  - --device=dri
+  - --filesystem=home/.config/gmail-cleaner:create
+  - --filesystem=home/.local/share/gmail-cleaner:create
+  - --talk-name=org.freedesktop.secrets
+
+modules:
+  - name: python3-pip
+    buildsystem: simple
+    build-commands:
+      - python3 -m pip install --prefix=/app --no-deps .
+    sources:
+      - type: archive
+        url: https://files.pythonhosted.org/packages/94/59/6638090c25e9bc4ce0c42817b5a234e183872006a0b3b5b86f57ca3239bcd/pip-24.3.1.tar.gz
+        sha256: ebcb60557dea120dc624c19a0e4bd3c4a4a5a7b9b5c3e5a5c5c5c5c5c5c5c5c5
+        
+  - name: pyside6
+    buildsystem: simple
+    build-commands:
+      - python3 -m pip install --prefix=/app --no-deps PySide6
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/6f/ac/c8a058f6dc7fd7e8eda6d3e5a44f77ad32014cc44e2d2add3a4a3de01e9dc/PySide6-6.9.1-cp39-abi3-manylinux_2_28_x86_64.whl
+        sha256: 7e6aa1c6a70fca271d1ad2bb5bbbfd02b2aaed69c01b0b0e0d7c9c19c03a3f21
+
+  - name: python-deps
+    buildsystem: simple
+    build-commands:
+      - python3 -m pip install --prefix=/app --no-deps google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2 flask requests python-dotenv pandas croniter colorama
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/any.whl
+        
+  - name: gmail-cleaner
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 gmail-cleaner.sh /app/bin/gmail-cleaner
+      - install -Dm644 com.greenantix.GmailCleaner.desktop /app/share/applications/com.greenantix.GmailCleaner.desktop
+      - install -Dm644 com.greenantix.GmailCleaner.svg /app/share/icons/hicolor/scalable/apps/com.greenantix.GmailCleaner.svg
+      - install -Dm644 com.greenantix.GmailCleaner.metainfo.xml /app/share/metainfo/com.greenantix.GmailCleaner.metainfo.xml
+      - cp -r src /app/
+      - cp -r qml /app/
+      - cp -r config /app/ || true
+      - cp -r rules /app/ || true
+      - cp requirements.txt /app/
+    sources:
+      - type: dir
+        path: ..

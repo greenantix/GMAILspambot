@@ -147,25 +147,22 @@ class LMStudioManager:
             sender = email_senders[i] if email_senders and i < len(email_senders) else "unknown"
             emails_text += f"{i+1}. From: {sender} | Subject: {subject}\n"
         
-        prompt = f"""You are an expert email categorization assistant. Categorize these emails into the most appropriate category.
+        prompt = f"""You are an expert email categorization system. Analyze each email and assign the most appropriate category.
 
-Categories: {', '.join(categories)}
+CATEGORIES:
+• INBOX - Critical/urgent only (security alerts, payment issues, account problems)
+• BILLS - Receipts, invoices, statements, financial documents
+• SHOPPING - Orders, shipping updates, promotions, retail communications  
+• NEWSLETTERS - News, updates, educational content, subscriptions
+• SOCIAL - Social media, gaming, app notifications
+• PERSONAL - Personal correspondence, scheduling, real estate
+• JUNK - Spam, irrelevant content, suspicious emails
 
-Rules:
-- INBOX: Critical/urgent only (security, payments, account issues)
-- BILLS: Receipts, invoices, statements, financial documents  
-- SHOPPING: E-commerce, shipping, retail notifications
-- NEWSLETTERS: News, updates, educational content, subscriptions
-- SOCIAL: Social media, gaming, app notifications
-- PERSONAL: Personal correspondence, scheduling, real estate
-- JUNK: Spam, unwanted marketing, obvious junk
-- REVIEW: Uncertain cases needing human review
-
-Emails to categorize:
+EMAILS TO CATEGORIZE:
 {emails_text}
 
-Respond with ONLY a JSON array where each object has "index" (1-based) and "category". Example:
-[{{"index": 1, "category": "BILLS"}}, {{"index": 2, "category": "NEWSLETTERS"}}]"""
+Respond with ONLY valid JSON array. Each object must have "index" (1-based) and "category":
+[{{"index": 1, "category": "SHOPPING"}}, {{"index": 2, "category": "NEWSLETTERS"}}]"""
 
         result = self.generate_completion(
             prompt, 

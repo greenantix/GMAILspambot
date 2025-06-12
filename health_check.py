@@ -21,7 +21,7 @@ Requirements:
 
 import os
 import json
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template_string
 from flask import request
 from lm_studio_integration import lm_studio
 from log_config import init_logging, get_logger
@@ -215,9 +215,287 @@ def lm_studio_switch_model():
         return jsonify({"status": f"model_switched_to_{model_key}"}), 200
     else:
         return jsonify({"error": f"Failed to switch model to {model_key}"}), 500
-# --- Documentation endpoint ---
+# --- Web Dashboard ---
 @app.route("/", methods=["GET"])
-def docs():
+def dashboard():
+    """
+    Web dashboard for Gmail Spam Bot
+    """
+    dashboard_html = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📧 Gmail Spam Bot - Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0d1117; color: #e6edf3; line-height: 1.6;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; margin-bottom: 40px; }
+        .header h1 { color: #58a6ff; font-size: 2.5em; margin-bottom: 10px; }
+        .header p { color: #8b949e; font-size: 1.1em; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .card { 
+            background: #161b22; border: 1px solid #30363d; border-radius: 8px; 
+            padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        .card h3 { color: #58a6ff; margin-bottom: 15px; font-size: 1.2em; }
+        .status { display: flex; align-items: center; margin: 10px 0; }
+        .status-dot { 
+            width: 12px; height: 12px; border-radius: 50%; margin-right: 10px;
+            animation: pulse 2s infinite;
+        }
+        .status-online { background: #2ea043; }
+        .status-offline { background: #da3633; }
+        .status-unknown { background: #f85149; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .btn { 
+            background: #238636; color: white; border: none; padding: 10px 20px; 
+            border-radius: 6px; cursor: pointer; margin: 5px; font-size: 14px;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #2ea043; }
+        .btn:disabled { background: #484f58; cursor: not-allowed; }
+        .btn-secondary { background: #21262d; border: 1px solid #30363d; }
+        .btn-secondary:hover { background: #30363d; }
+        .log-output { 
+            background: #0d1117; border: 1px solid #30363d; padding: 15px; 
+            border-radius: 6px; font-family: 'Consolas', monospace; font-size: 12px;
+            max-height: 200px; overflow-y: auto; margin-top: 10px;
+        }
+        .stats { display: flex; justify-content: space-between; margin: 15px 0; }
+        .stat { text-align: center; }
+        .stat-value { font-size: 1.8em; font-weight: bold; color: #58a6ff; }
+        .stat-label { color: #8b949e; font-size: 0.9em; }
+        .progress-bar { 
+            background: #21262d; border-radius: 10px; height: 8px; overflow: hidden; margin: 10px 0;
+        }
+        .progress-fill { background: #2ea043; height: 100%; transition: width 0.3s ease; }
+        .model-selector { margin: 10px 0; }
+        .model-selector select { 
+            background: #21262d; color: #e6edf3; border: 1px solid #30363d; 
+            padding: 8px; border-radius: 6px; width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📧 Gmail Spam Bot</h1>
+            <p>LM Studio Powered Email Management System</p>
+        </div>
+
+        <div class="grid">
+            <!-- System Status -->
+            <div class="card">
+                <h3>🏥 System Status</h3>
+                <div class="status">
+                    <div class="status-dot status-online"></div>
+                    <span>Health Check Server: Online</span>
+                </div>
+                <div class="status" id="gmail-status">
+                    <div class="status-dot status-unknown"></div>
+                    <span>Gmail Connection: Checking...</span>
+                </div>
+                <div class="status" id="lmstudio-status">
+                    <div class="status-dot status-unknown"></div>
+                    <span>LM Studio: Checking...</span>
+                </div>
+                <div class="status" id="qml-status">
+                    <div class="status-dot status-online"></div>
+                    <span>QML Interface: Running (Offscreen)</span>
+                </div>
+            </div>
+
+            <!-- LM Studio Control -->
+            <div class="card">
+                <h3>🧠 LM Studio Control</h3>
+                <div id="current-model">Current Model: Loading...</div>
+                <div class="model-selector">
+                    <select id="model-select">
+                        <option>Loading models...</option>
+                    </select>
+                </div>
+                <button class="btn" onclick="switchModel()">Switch Model</button>
+                <button class="btn btn-secondary" onclick="runAnalysis()">Run Analysis</button>
+            </div>
+
+            <!-- Email Statistics -->
+            <div class="card">
+                <h3>📊 Email Statistics</h3>
+                <div class="stats">
+                    <div class="stat">
+                        <div class="stat-value" id="unread-count">-</div>
+                        <div class="stat-label">Unread Emails</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="accuracy-rate">-</div>
+                        <div class="stat-label">Accuracy</div>
+                    </div>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="processing-progress" style="width: 0%"></div>
+                </div>
+                <div id="processing-status">Ready to process emails</div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="card">
+                <h3>⚡ Quick Actions</h3>
+                <button class="btn" onclick="startProcessing()">🚀 Start Processing</button>
+                <button class="btn" onclick="exportEmails()">📤 Export Emails</button>
+                <button class="btn" onclick="cleanupOld()">🧹 Cleanup Old</button>
+                <button class="btn btn-secondary" onclick="viewLogs()">📋 View Logs</button>
+            </div>
+        </div>
+
+        <!-- Log Output -->
+        <div class="card">
+            <h3>📋 System Logs</h3>
+            <div class="log-output" id="logs">Loading logs...</div>
+            <button class="btn btn-secondary" onclick="refreshLogs()">Refresh Logs</button>
+        </div>
+    </div>
+
+    <script>
+        // Auto-refresh dashboard
+        setInterval(updateDashboard, 5000);
+        updateDashboard();
+
+        async function updateDashboard() {
+            // Update system status
+            try {
+                const statusResponse = await fetch('/status');
+                const status = await statusResponse.json();
+                
+                // Update logs
+                if (status.log_info && status.log_info.last_10_lines) {
+                    document.getElementById('logs').textContent = 
+                        status.log_info.last_10_lines.join('').slice(-1000) + '...';
+                }
+            } catch (e) {
+                console.error('Failed to fetch status:', e);
+            }
+
+            // Update LM Studio status
+            try {
+                const lmResponse = await fetch('/api/lmstudio/status');
+                const lmStatus = await lmResponse.json();
+                const lmStatusEl = document.getElementById('lmstudio-status');
+                
+                if (lmStatus.status === 'running') {
+                    lmStatusEl.innerHTML = `
+                        <div class="status-dot status-online"></div>
+                        <span>LM Studio: Online (${lmStatus.loaded_model || 'Unknown Model'})</span>
+                    `;
+                    document.getElementById('current-model').textContent = 
+                        `Current Model: ${lmStatus.loaded_model || 'Unknown'}`;
+                } else {
+                    lmStatusEl.innerHTML = `
+                        <div class="status-dot status-offline"></div>
+                        <span>LM Studio: Offline</span>
+                    `;
+                }
+            } catch (e) {
+                console.error('Failed to fetch LM Studio status:', e);
+            }
+
+            // Update available models
+            try {
+                const modelsResponse = await fetch('/api/lmstudio/models');
+                const models = await modelsResponse.json();
+                const modelSelect = document.getElementById('model-select');
+                modelSelect.innerHTML = '';
+                
+                Object.keys(models).forEach(key => {
+                    const option = document.createElement('option');
+                    option.value = key;
+                    option.textContent = `${key}: ${models[key].name}`;
+                    modelSelect.appendChild(option);
+                });
+            } catch (e) {
+                console.error('Failed to fetch models:', e);
+            }
+        }
+
+        async function switchModel() {
+            const modelKey = document.getElementById('model-select').value;
+            if (!modelKey) return;
+            
+            try {
+                const response = await fetch('/api/lmstudio/switch-model', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model_key: modelKey })
+                });
+                
+                const result = await response.json();
+                if (response.ok) {
+                    alert(`✅ Switched to model: ${modelKey}`);
+                } else {
+                    alert(`❌ Failed to switch model: ${result.error}`);
+                }
+                updateDashboard();
+            } catch (e) {
+                alert(`❌ Error switching model: ${e.message}`);
+            }
+        }
+
+        async function runAnalysis() {
+            try {
+                document.getElementById('processing-status').textContent = 'Running LM Studio analysis...';
+                const response = await fetch('/api/lmstudio/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ use_existing_export: true })
+                });
+                
+                const result = await response.json();
+                if (response.ok) {
+                    alert('✅ Analysis completed successfully!');
+                    document.getElementById('processing-status').textContent = 'Analysis completed';
+                } else {
+                    alert(`❌ Analysis failed: ${result.error}`);
+                    document.getElementById('processing-status').textContent = 'Analysis failed';
+                }
+            } catch (e) {
+                alert(`❌ Error running analysis: ${e.message}`);
+                document.getElementById('processing-status').textContent = 'Ready to process emails';
+            }
+        }
+
+        function startProcessing() {
+            alert('🚀 Processing feature will be implemented in next update');
+        }
+
+        function exportEmails() {
+            alert('📤 Export feature will be implemented in next update');
+        }
+
+        function cleanupOld() {
+            alert('🧹 Cleanup feature will be implemented in next update');
+        }
+
+        function viewLogs() {
+            window.open('/status', '_blank');
+        }
+
+        function refreshLogs() {
+            updateDashboard();
+        }
+    </script>
+</body>
+</html>
+    """
+    return render_template_string(dashboard_html)
+
+# --- API Documentation endpoint ---
+@app.route("/api", methods=["GET"])
+def api_docs():
     """
     API documentation endpoint.
     """

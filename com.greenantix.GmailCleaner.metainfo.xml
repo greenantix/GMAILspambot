@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.greenantix.GmailCleaner</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Gmail Cleaner</name>
+  <summary>Intelligent Gmail organization with AI-powered categorization</summary>
+  <description>
+    <p>
+      Gmail Cleaner is a powerful email management tool that uses LM Studio AI integration
+      to intelligently categorize and organize your Gmail inbox. Features include:
+    </p>
+    <ul>
+      <li>Smart email categorization using local AI models</li>
+      <li>Modern QML interface with Material Design</li>
+      <li>Real-time processing with live progress monitoring</li>
+      <li>Comprehensive audit logging and undo functionality</li>
+      <li>Advanced filtering and rule management</li>
+      <li>Bulk email processing for large inboxes</li>
+    </ul>
+  </description>
+  
+  <screenshots>
+    <screenshot type="default">
+      <caption>Main Dashboard</caption>
+    </screenshot>
+  </screenshots>
+  
+  <url type="homepage">https://github.com/greenantix/gmail-cleaner</url>
+  <url type="bugtracker">https://github.com/greenantix/gmail-cleaner/issues</url>
+  
+  <developer_name>GreenAntix</developer_name>
+  
+  <provides>
+    <binary>gmail-cleaner</binary>
+  </provides>
+  
+  <categories>
+    <category>Office</category>
+    <category>Email</category>
+    <category>Productivity</category>
+  </categories>
+  
+  <releases>
+    <release version="2.0.0" date="2025-06-12">
+      <description>
+        <p>Major rewrite with QML interface and LM Studio integration</p>
+        <ul>
+          <li>New modern QML interface with Material Design</li>
+          <li>LM Studio AI integration for smart categorization</li>
+          <li>Real-time processing dashboard</li>
+          <li>Comprehensive audit system</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-info">mild</content_attribute>
+  </content_rating>
+</component>

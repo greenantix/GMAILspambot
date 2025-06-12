@@ -25,3 +25,6 @@ croniter>=1.3.0
 
 # Optional: For better logging and configuration
 colorama>=0.4.0
+
+# QML UI Framework
+PySide6>=6.5.0

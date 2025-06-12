@@ -118,7 +118,7 @@ const SettingsPage = () => {
   const runLmStudioAnalysis = async () => {
     try {
       setLmStudioLoading(true);
-      const response = await apiService.post('/lmstudio/analyze', {
+      const response = await apiService.runLMStudioAnalysis({
         use_existing_export: true
       });
       
@@ -134,7 +134,7 @@ const SettingsPage = () => {
 
   const switchLmStudioModel = async (modelKey) => {
     try {
-      await apiService.post('/lmstudio/switch-model', { model_key: modelKey });
+      await apiService.switchLMStudioModel(modelKey);
       setSelectedModel(modelKey);
       fetchLmStudioStatus(); // Refresh status after switching
       setSuccess(`Switched to ${modelKey} model`);
@@ -381,25 +381,6 @@ const LMStudioSettings = ({
             <span className="text-gray-400">Loading...</span>
           )}
         </div>
-const ModelPerformanceMetrics = () => (
-  <Card>
-    <h3 className="text-lg font-semibold text-white mb-4">Model Performance</h3>
-    <div className="space-y-2 text-sm text-gray-300">
-      <div className="flex justify-between">
-        <span>Response Time:</span>
-        <span className="font-medium text-white">N/A</span>
-      </div>
-      <div className="flex justify-between">
-        <span>Tokens per Second:</span>
-        <span className="font-medium text-white">N/A</span>
-      </div>
-      <div className="flex justify-between">
-        <span>Last Analysis Duration:</span>
-        <span className="font-medium text-white">N/A</span>
-      </div>
-    </div>
-  </Card>
-);
 
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -474,7 +455,28 @@ const ModelPerformanceMetrics = () => (
         </div>
       </div>
     </Card>
+    <ModelPerformanceMetrics />
   </div>
+);
+
+const ModelPerformanceMetrics = () => (
+  <Card>
+    <h3 className="text-lg font-semibold text-white mb-4">Model Performance</h3>
+    <div className="space-y-2 text-sm text-gray-300">
+      <div className="flex justify-between">
+        <span>Response Time:</span>
+        <span className="font-medium text-white">N/A</span>
+      </div>
+      <div className="flex justify-between">
+        <span>Tokens per Second:</span>
+        <span className="font-medium text-white">N/A</span>
+      </div>
+      <div className="flex justify-between">
+        <span>Last Analysis Duration:</span>
+        <span className="font-medium text-white">N/A</span>
+      </div>
+    </div>
+  </Card>
 );
 
 const GmailSettings = ({ settings, updateSetting }) => (

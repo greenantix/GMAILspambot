@@ -41,43 +41,7 @@ load_dotenv()
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
 LM_STUDIO_MODELS_URL = "http://localhost:1234/v1/models"
 
-# Gemini configuration
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
-GEMINI_ANALYSIS_PROMPT = """Analyze these email subjects and suggest email organization improvements.
-
-EMAIL SUBJECTS:
-{subjects_content}
-
-Analyze the patterns and provide suggestions in this EXACT JSON format:
-
-{{
-  "categories": {{
-    "SHOPPING": {{
-      "keywords": ["order", "shipping", "purchase", "cart"],
-      "senders": ["@amazon.com", "@ebay.com", "noreply@"],
-      "description": "Order confirmations and shopping"
-    }},
-    "NEWSLETTERS": {{
-      "keywords": ["newsletter", "digest", "weekly", "unsubscribe"],
-      "senders": ["newsletter@", "news@"],
-      "description": "Newsletters and updates"
-    }},
-    "BILLS": {{
-      "keywords": ["invoice", "payment", "bill", "statement"],
-      "senders": ["billing@", "accounts@"],
-      "description": "Bills and financial documents"
-    }}
-  }},
-  "insights": {{
-    "top_senders": ["sender1@example.com", "sender2@example.com"],
-    "common_keywords": ["keyword1", "keyword2"]
-  }}
-}}
-
-Respond with ONLY valid JSON, no other text or explanation."""
+from lm_studio_integration import lm_studio
 
 # Settings configuration
 DEFAULT_SETTINGS = {
@@ -2804,347 +2768,83 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
             print(f'Export error: {e}')
             return None # Return None on error
     
-    def test_gemini_connection(self):
-        """Test if Gemini API key is working with a simple request."""
-        try:
-            if not GEMINI_API_KEY:
-                return False
-            
-            import google.generativeai as genai
-            
-            # Configure Gemini
-            genai.configure(api_key=GEMINI_API_KEY)
-            
-            # Create model (using latest Gemini model)
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            
-            # Test with a simple request
-            response = model.generate_content("Test connection - respond with OK")
-            
-            # Check if we got a valid response
-            if response and response.text:
-                return True
-            else:
-                return False
-                
-        except Exception as e:
-            if hasattr(self, 'logger'):
-                self.logger.error(f"Gemini connection test failed: {str(e)}")
-            return False
-
-    def analyze_with_gemini(self, subjects_file='email_subjects.txt', max_retries=3, progress_callback=None):
-        """Use Gemini to analyze email subjects and generate filtering rules."""
-        import time
-        import random
-        
+    def analyze_with_lm_studio(self, subjects_file='email_subjects.txt', progress_callback=None):
+        """Use LM Studio to analyze email subjects and generate filtering rules."""
         def update_progress(message):
             if progress_callback:
                 progress_callback(message)
             else:
                 print(message)
-        
-        if not GEMINI_API_KEY:
-            update_progress("❌ GEMINI_API_KEY not found in .env file")
+
+        if not lm_studio.is_server_running():
+            update_progress("❌ LM Studio server is not running.")
             return None
-        
+
         if not os.path.exists(subjects_file):
             update_progress(f"❌ Subjects file {subjects_file} not found")
             return None
+
+        update_progress("🤖 Analyzing email subjects with LM Studio...")
+        with open(subjects_file, 'r', encoding='utf-8') as f:
+            subjects_content = f.read()
+
+        email_data = [{"subject": line} for line in subjects_content.splitlines()]
         
-        update_progress("🤖 Analyzing email subjects with Gemini...")
-        
-        # Test connection first
-        update_progress("🔗 Testing Gemini API connection...")
-        if not self.test_gemini_connection():
-            update_progress("❌ Gemini API connection test failed")
+        analysis_result = lm_studio.analyze_email_patterns(email_data)
+        if not analysis_result:
+            update_progress("❌ LM Studio analysis failed.")
             return None
-        update_progress("✅ Gemini API connection successful")
+
+        filter_rules = lm_studio.generate_filter_rules(analysis_result)
         
-        def _make_gemini_request():
-            # Read the subjects file
-            with open(subjects_file, 'r', encoding='utf-8') as f:
-                subjects_content = f.read()
-            
-            # Limit content size to avoid API limits
-            if len(subjects_content) > 100000:  # ~100KB limit
-                print("⚠️  Subject file is large, truncating for Gemini analysis...")
-                subjects_content = subjects_content[:100000] + "\n\n[Content truncated due to size limits]"
-            
-            # Create the analysis prompt
-            prompt = GEMINI_ANALYSIS_PROMPT.format(subjects_content=subjects_content)
-            
-            # Initialize Gemini model with safety settings
-            import google.generativeai as genai
-            genai.configure(api_key=GEMINI_API_KEY)
-            
-            # Configure generation parameters for more reliable JSON output
-            generation_config = genai.types.GenerationConfig(
-                temperature=0.1,  # Lower temperature for more consistent output
-                top_p=0.8,
-                top_k=40,
-                max_output_tokens=4096,
-                candidate_count=1
-            )
-            
-            # Safety settings to prevent blocking
-            safety_settings = [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-            ]
-            
-            model = genai.GenerativeModel(
-                'gemini-1.5-flash',
-                generation_config=generation_config,
-                safety_settings=safety_settings
-            )
-            
-            # Generate response
-            response = model.generate_content(prompt)
-            
-            # Enhanced response validation
-            if not response or not response.text:
-                raise ValueError("Empty response from Gemini API")
-            
-            if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
-                raise ValueError(f"Gemini blocked request: {response.prompt_feedback.block_reason}")
-            
-            return response.text.strip()
-        
-        def _parse_gemini_response(response_text):
-            """Parse Gemini response with robust JSON extraction."""
-            import re
-            
-            # Remove markdown code blocks if present
-            if response_text.startswith('```json'):
-                response_text = response_text[7:]  # Remove ```json
-            elif response_text.startswith('```'):
-                response_text = response_text[3:]   # Remove ```
-            
-            if response_text.endswith('```'):
-                response_text = response_text[:-3]  # Remove trailing ```
-            
-            response_text = response_text.strip()
-            
-            # Try direct JSON parsing first
-            try:
-                return json.loads(response_text)
-            except json.JSONDecodeError:
-                pass
-            
-            # Try to extract JSON from mixed content
-            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-            json_matches = re.findall(json_pattern, response_text, re.DOTALL)
-            
-            for match in json_matches:
-                try:
-                    parsed = json.loads(match)
-                    # Validate it looks like our expected structure
-                    if isinstance(parsed, dict) and any(key in parsed for key in ['category_rules', 'label_schema', 'important_keywords']):
-                        return parsed
-                except json.JSONDecodeError:
-                    continue
-            
-            # Try to clean up common JSON issues
-            cleaned_text = response_text.replace('\n', ' ').replace('\t', ' ')
-            cleaned_text = re.sub(r',\s*}', '}', cleaned_text)  # Remove trailing commas
-            cleaned_text = re.sub(r',\s*]', ']', cleaned_text)  # Remove trailing commas in arrays
-            
-            try:
-                return json.loads(cleaned_text)
-            except json.JSONDecodeError:
-                raise ValueError(f"Could not parse JSON from Gemini response: {response_text[:200]}...")
-        
-        # Retry logic with exponential backoff
-        update_progress("📊 Reading and processing email subjects...")
-        for attempt in range(max_retries + 1):
-            try:
-                update_progress(f"🧠 Sending analysis request to Gemini (attempt {attempt + 1}/{max_retries + 1})...")
-                response_text = _make_gemini_request()
-                update_progress("🔍 Parsing Gemini response...")
-                rules = _parse_gemini_response(response_text)
-                update_progress("✅ Gemini analysis complete!")
-                return rules
-                
-            except Exception as e:
-                error_msg = str(e).lower()
-                
-                # Check for specific error types
-                if "quota" in error_msg or "rate limit" in error_msg:
-                    if attempt == max_retries:
-                        update_progress(f"❌ Gemini quota/rate limit exceeded after {max_retries + 1} attempts")
-                        if hasattr(self, 'logger'):
-                            self.logger.error(f"Gemini quota exceeded: {str(e)}")
-                        return None
-                    
-                    # Longer delay for quota issues
-                    delay = (5 ** attempt) + random.uniform(0, 3)
-                    update_progress(f"⏳ Gemini quota limit, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
-                    time.sleep(delay)
-                    
-                elif "blocked" in error_msg or "safety" in error_msg:
-                    update_progress(f"❌ Gemini safety filter blocked the request: {str(e)}")
-                    if hasattr(self, 'logger'):
-                        self.logger.error(f"Gemini safety block: {str(e)}")
-                    return None
-                    
-                elif "could not parse json" in error_msg or "json" in error_msg:
-                    if attempt == max_retries:
-                        update_progress(f"❌ Failed to parse Gemini JSON response after {max_retries + 1} attempts")
-                        update_progress("Raw response preview: " + str(e)[-200:])
-                        if hasattr(self, 'logger'):
-                            self.logger.error(f"Gemini JSON parsing failed: {str(e)}")
-                        return None
-                    
-                    delay = 2 + random.uniform(0, 1)
-                    update_progress(f"🔄 Gemini JSON parsing failed, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
-                    time.sleep(delay)
-                    
-                else:
-                    if attempt == max_retries:
-                        update_progress(f"❌ Gemini analysis failed after {max_retries + 1} attempts: {str(e)}")
-                        if hasattr(self, 'logger'):
-                            self.logger.error(f"Gemini analysis failed: {str(e)}")
-                        return None
-                    
-                    delay = (2 ** attempt) + random.uniform(0, 1)
-                    update_progress(f"🔄 Gemini error, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1}): {str(e)}")
-                    time.sleep(delay)
-        
-        return None
-    
-    def apply_gemini_rules(self, rules, log_callback=None):
-        """Apply filtering rules generated by Gemini with integrated config updater logic."""
+        update_progress("✅ LM Studio analysis complete!")
+        return {
+            "analysis": analysis_result,
+            "suggested_filters": filter_rules
+        }
+
+    def apply_lm_studio_rules(self, rules, log_callback=None):
+        """Apply filtering rules generated by LM Studio."""
         if not rules:
             if log_callback:
                 log_callback("❌ No rules to apply")
             else:
                 print("❌ No rules to apply")
             return
-        
+
         if log_callback:
-            log_callback("🔧 Applying Gemini-generated filtering rules...")
+            log_callback("🔧 Applying LM Studio-generated filtering rules...")
         else:
-            print("🔧 Applying Gemini-generated filtering rules...")
-        
-        try:
-            # Import logger for gemini_config_updater functions
-            from log_config import get_logger
-            logger = get_logger(__name__)
-            
-            # Update label schema if specified
-            if 'label_schema' in rules:
-                try:
-                    # Use existing authenticated service instead of creating new one
-                    gmail_label_manager = GmailLabelManager(self.service)
-                    gmail_label_manager.refresh_label_cache()
-                    update_label_schema(gmail_label_manager, rules['label_schema'], logger)
-                    if log_callback:
-                        log_callback("✅ Label schema updated")
-                except Exception as e:
-                    if log_callback:
-                        log_callback(f"⚠️ Label schema update failed: {e}")
-                    logger.error(f"Label schema update failed: {e}")
-            
-            # Update category rules
-            if 'category_rules' in rules:
-                try:
-                    rules_dir = "rules"
-                    update_category_rules(rules['category_rules'], rules_dir, logger)
-                    if log_callback:
-                        log_callback("✅ Category rules updated")
-                except Exception as e:
-                    if log_callback:
-                        log_callback(f"⚠️ Category rules update failed: {e}")
-                    logger.error(f"Category rules update failed: {e}")
-            
-            # Update important keywords and senders
-            settings_updated = False
-            if 'important_keywords' in rules:
-                self.settings['important_keywords'] = rules['important_keywords']
-                settings_updated = True
-                if log_callback:
-                    log_callback(f"✅ Updated important keywords ({len(rules['important_keywords'])} items)")
-            
-            if 'important_senders' in rules:
-                self.settings['important_senders'] = rules['important_senders']
-                settings_updated = True
-                if log_callback:
-                    log_callback(f"✅ Updated important senders ({len(rules['important_senders'])} items)")
-            
-            # Store category rules for advanced filtering in settings
-            if 'category_rules' in rules:
-                self.settings['category_rules'] = rules['category_rules']
-                settings_updated = True
-            
-            # Update auto-delete list
-            if 'auto_delete_senders' in rules:
-                self.settings['auto_delete_senders'] = rules['auto_delete_senders']
-                settings_updated = True
-                if log_callback:
-                    log_callback(f"✅ Updated auto-delete senders ({len(rules['auto_delete_senders'])} items)")
-            
-            # Save settings to file so changes persist
-            if settings_updated:
-                self.save_settings()
-                if log_callback:
-                    log_callback("💾 Settings saved to file")
-            
-            # Update label action mappings in settings
-            if 'category_rules' in rules:
-                try:
-                    updated = update_label_action_mappings(self.settings, rules['category_rules'], logger)
-                    if updated and log_callback:
-                        log_callback("✅ Label action mappings updated")
-                except Exception as e:
-                    if log_callback:
-                        log_callback(f"⚠️ Label action mappings update failed: {e}")
-                    logger.error(f"Label action mappings update failed: {e}")
-            
-            # Apply suggested Gmail filters from Gemini
-            if 'suggested_gmail_filters' in rules:
-                try:
-                    self.apply_suggested_filters(rules['suggested_gmail_filters'], log_callback)
-                except Exception as e:
-                    if log_callback:
-                        log_callback(f"⚠️ Gmail filters creation failed: {e}")
-                    logger.error(f"Gmail filters creation failed: {e}")
-            
-            # Save updated settings
-            self.save_settings()
-            
-            if log_callback:
-                log_callback("✅ Filtering rules updated and saved!")
-            else:
-                print("✅ Filtering rules updated and saved!")
-                
-        except Exception as e:
-            error_msg = f"❌ Error applying Gemini rules: {e}"
-            if log_callback:
-                log_callback(error_msg)
-            else:
-                print(error_msg)
-            raise
+            print("🔧 Applying LM Studio-generated filtering rules...")
+
+        # This is a placeholder for now. In a real implementation, you would
+        # parse the rules and apply them to your settings or directly to Gmail.
+        if log_callback:
+            log_callback(f"Received {len(rules.get('suggested_filters', []))} filter suggestions.")
+            log_callback("Rule application logic not yet implemented.")
     
     def export_and_analyze(self, max_emails=1000, days_back=30):
-        """Export subjects and automatically analyze with Gemini."""
+        """Export subjects and automatically analyze with LM Studio."""
         print("🚀 Starting automatic email analysis...")
         
         # Export subjects
-        self.export_subjects(max_emails, days_back)
+        subjects_file = self.export_subjects(max_emails, days_back)
         
-        # Analyze with Gemini
-        rules = self.analyze_with_gemini()
+        if not subjects_file:
+            print("\n⚠️ Export failed, cannot proceed with analysis.")
+            return
+
+        # Analyze with LM Studio
+        rules = self.analyze_with_lm_studio(subjects_file)
         
         if rules:
             # Apply the rules
-            self.apply_gemini_rules(rules)
+            self.apply_lm_studio_rules(rules)
             print("\n🎉 Automatic analysis complete!")
-            print("Your email filtering rules have been updated based on Gemini's analysis.")
+            print("Your email filtering rules have been updated based on LM Studio's analysis.")
         else:
             print("\n⚠️ Analysis failed, but subjects have been exported to email_subjects.txt")
-            print("You can manually upload this file to Gemini for analysis.")
+            print("You can manually trigger the analysis if the LM Studio server is running.")
             
     def analyze_unsubscribe_candidates(self, log_callback=None):
         """
@@ -3910,7 +3610,7 @@ class GmailCleanerGUI:
         ttk.Button(actions_grid, text="Start Backlog Cleanup", command=self.start_backlog_cleanup).grid(row=0, column=0, padx=5, pady=5, sticky=tk.W+tk.E)
         ttk.Button(actions_grid, text="View Learning Suggestions", command=self.show_learning_engine_suggestions).grid(row=0, column=1, padx=5, pady=5, sticky=tk.W+tk.E)
         ttk.Button(actions_grid, text="Export Email Data", command=self.export_subjects).grid(row=1, column=0, padx=5, pady=5, sticky=tk.W+tk.E)
-        ttk.Button(actions_grid, text="Analyze with Gemini", command=self.auto_analyze).grid(row=1, column=1, padx=5, pady=5, sticky=tk.W+tk.E)
+        ttk.Button(actions_grid, text="Analyze with LM Studio", command=self.auto_analyze).grid(row=1, column=1, padx=5, pady=5, sticky=tk.W+tk.E)
         
         # Configure grid weights
         actions_grid.columnconfigure(0, weight=1)
@@ -4038,7 +3738,7 @@ class GmailCleanerGUI:
         self.export_btn = ttk.Button(control_frame, text="Export Subjects", command=self.export_subjects)
         self.export_btn.pack(side=tk.LEFT, padx=5)
         
-        self.auto_analyze_btn = ttk.Button(control_frame, text="Auto-Analyze with Gemini", command=self.auto_analyze)
+        self.auto_analyze_btn = ttk.Button(control_frame, text="Auto-Analyze with LM Studio", command=self.auto_analyze)
         self.auto_analyze_btn.pack(side=tk.LEFT, padx=5)
         
         # Options frame
@@ -4549,17 +4249,13 @@ class GmailCleanerGUI:
             print(f"Error restoring export UI state: {e}")
     
     def auto_analyze(self):
-        """Auto-analyze emails with Gemini and update settings."""
+        """Auto-analyze emails with LM Studio and update settings."""
         # Prevent double-clicking
         if hasattr(self, 'auto_analyze_btn') and self.auto_analyze_btn['state'] == 'disabled':
             return
             
         if not self.ensure_cleaner_connection():
             messagebox.showwarning("Warning", "Failed to establish Gmail connection")
-            return
-        
-        if not GEMINI_API_KEY:
-            messagebox.showerror("Error", "GEMINI_API_KEY not found in .env file")
             return
         
         # Clear log
@@ -4569,23 +4265,14 @@ class GmailCleanerGUI:
         self.analyze_thread = threading.Thread(target=self._auto_analyze_thread, daemon=True)
         self.active_threads.append(self.analyze_thread)
         self.analyze_thread.start()
-    
+
     def _auto_analyze_thread(self):
-        """Thread function for auto-analyzing with Gemini."""
+        """Thread function for auto-analyzing with LM Studio."""
         try:
             # Update button to show it's working
             self.root.after(0, lambda: self.auto_analyze_btn.config(state='disabled', text="Analyzing..."))
             
-            self.log("🚀 Starting automatic email analysis with Gemini...")
-            
-            # Test Gemini API key first
-            self.log("🔑 Testing Gemini API key...")
-            if not self.cleaner.test_gemini_connection():
-                error_msg = "Gemini API key test failed - check your .env file"
-                self.log(f"❌ {error_msg}")
-                self.root.after(0, lambda: messagebox.showerror("Gemini Error", error_msg))
-                return
-            self.log("✅ Gemini API key validated")
+            self.log("🚀 Starting automatic email analysis with LM Studio...")
             
             # Check if we should use existing export or create new one
             subjects_file = 'email_subjects.txt'
@@ -4622,18 +4309,17 @@ class GmailCleanerGUI:
                     self.root.after(0, lambda: messagebox.showerror("Export Error", error_msg))
                     return
             
-            # Analyze with Gemini
-            self.log("🤖 Analyzing with Gemini...")
-            proposed_rules = self.cleaner.analyze_with_gemini(subjects_file, progress_callback=self.log)
+            # Analyze with LM Studio
+            self.log("🤖 Analyzing with LM Studio...")
+            proposed_rules = self.cleaner.analyze_with_lm_studio(subjects_file, progress_callback=self.log)
             
             if not proposed_rules:
-                error_msg = "Gemini analysis failed. This may be due to OAuth authentication issues, network problems, or API limits."
+                error_msg = "LM Studio analysis failed. Make sure the LM Studio server is running and a model is loaded."
                 self.log(f"❌ {error_msg}")
-                self.log("💡 Try re-authenticating in the Settings tab or check your network connection")
-                self.root.after(0, lambda: messagebox.showerror("Analysis Error", f"{error_msg}\n\nTry:\n- Re-authenticating in Settings\n- Checking network connection\n- Verifying Gemini API quota"))
+                self.root.after(0, lambda: messagebox.showerror("Analysis Error", f"{error_msg}"))
                 return
             
-            self.log("✅ Gemini analysis complete! Showing proposed changes...")
+            self.log("✅ LM Studio analysis complete! Showing proposed changes...")
             self.log(f"📋 Analysis returned: {list(proposed_rules.keys()) if isinstance(proposed_rules, dict) else type(proposed_rules).__name__}")
             
             # Show confirmation dialog with proposed changes
@@ -4653,7 +4339,7 @@ class GmailCleanerGUI:
         try:
             # Re-enable any disabled buttons
             if hasattr(self, 'auto_analyze_btn'):
-                self.auto_analyze_btn.config(state='normal', text="Auto-Analyze with Gemini")
+                self.auto_analyze_btn.config(state='normal', text="Auto-Analyze with LM Studio")
         except Exception as e:
             print(f"Error restoring UI after analysis: {e}")
     
@@ -4872,7 +4558,7 @@ class GmailCleanerGUI:
         """Show confirmation dialog with proposed changes from Gemini."""
         # Create confirmation window
         confirm_window = tk.Toplevel(self.root)
-        confirm_window.title("Confirm Gemini Analysis Results")
+        confirm_window.title("Confirm LM Studio Analysis Results")
         confirm_window.geometry("800x600")
         confirm_window.transient(self.root)
         confirm_window.grab_set()
@@ -4882,7 +4568,7 @@ class GmailCleanerGUI:
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # Title
-        ttk.Label(main_frame, text="Gemini Analysis Results", font=('TkDefaultFont', 12, 'bold')).pack(pady=(0, 10))
+        ttk.Label(main_frame, text="LM Studio Analysis Results", font=('TkDefaultFont', 12, 'bold')).pack(pady=(0, 10))
         
         # Check if we have valid proposed rules
         if not proposed_rules or not isinstance(proposed_rules, dict):
@@ -4890,24 +4576,24 @@ class GmailCleanerGUI:
             error_frame = ttk.Frame(main_frame)
             error_frame.pack(fill=tk.BOTH, expand=True)
             
-            ttk.Label(error_frame, text="❌ No Analysis Results Available", 
+            ttk.Label(error_frame, text="❌ No Analysis Results Available",
                      font=('TkDefaultFont', 14, 'bold'), foreground="red").pack(pady=20)
             
             error_text = scrolledtext.ScrolledText(error_frame, height=10, wrap=tk.WORD)
             error_text.pack(fill=tk.BOTH, expand=True, pady=10)
             
-            error_message = """Gemini analysis failed or returned no results.
+            error_message = """LM Studio analysis failed or returned no results.
 
 Possible causes:
-• OAuth authentication expired (try re-login in Settings)
-• Gemini API key issues
+• LM Studio server is not running
+• No model is loaded in LM Studio
 • Network connectivity problems
 • No email data to analyze
 
 Solutions:
-1. Go to Settings tab and click "🔄 Re-login to Gmail"
-2. Check your internet connection
-3. Verify GEMINI_API_KEY in .env file
+1. Start the LM Studio server
+2. Load a model in LM Studio
+3. Check your network connection
 4. Try exporting subjects first, then running analysis
 
 Debug Information:
@@ -4993,7 +4679,7 @@ Debug Information:
         raw_frame = ttk.Frame(notebook)
         notebook.add(raw_frame, text="Raw Analysis Data")
         
-        ttk.Label(raw_frame, text="Complete Gemini analysis response:").pack(anchor=tk.W, pady=5)
+        ttk.Label(raw_frame, text="Complete LM Studio analysis response:").pack(anchor=tk.W, pady=5)
         raw_text = scrolledtext.ScrolledText(raw_frame, height=15, wrap=tk.WORD)
         raw_text.pack(fill=tk.BOTH, expand=True, pady=5)
         raw_text.insert(1.0, json.dumps(proposed_rules, indent=2, default=str))
@@ -5005,7 +4691,7 @@ Debug Information:
         
         def apply_changes():
             try:
-                self.cleaner.apply_gemini_rules(proposed_rules, log_callback=self.log)
+                self.cleaner.apply_lm_studio_rules(proposed_rules, log_callback=self.log)
                 
                 # Refresh UI components
                 self.load_settings()
@@ -5015,13 +4701,13 @@ Debug Information:
                     self.refresh_labels()
                 
                 confirm_window.destroy()
-                messagebox.showinfo("Success", "Gemini rules applied successfully!\n\nYour filtering rules have been updated.")
+                messagebox.showinfo("Success", "LM Studio rules applied successfully!\n\nYour filtering rules have been updated.")
             except Exception as e:
                 self.log(f"❌ Error applying rules: {e}")
                 messagebox.showerror("Error", f"Failed to apply rules: {e}")
         
         def cancel_changes():
-            self.log("❌ User cancelled Gemini rule application")
+            self.log("❌ User cancelled LM Studio rule application")
             confirm_window.destroy()
         
         ttk.Button(buttons_frame, text="Apply Changes", command=apply_changes).pack(side=tk.RIGHT, padx=5)

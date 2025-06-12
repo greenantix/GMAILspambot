@@ -27,6 +27,7 @@ packages=(
     "google-generativeai"
     "python-dotenv"
     "requests"
+    "PySide6"
 )
 
 missing_packages=()
@@ -128,7 +129,9 @@ else
 fi
 
 echo ""
-echo "🎯 Starting Gmail Cleaner GUI with Intelligence Features..."
+echo "🎯 Starting Gmail Cleaner QML Interface..."
+echo "   📱 Modern Qt/QML dark theme interface"
+echo "   🧠 Smart LM Studio integration with model switching"
 echo "   🚨 INBOX: Critical emails only (security alerts, personal messages)"
 echo "   ⚡ PRIORITY: Important but not urgent (GitHub, Zillow, bank statements)"  
 echo "   📦 Other categories: Bills, Shopping, Newsletters, Social, Personal, Junk"
@@ -138,12 +141,55 @@ echo "   📊 Real-time analytics with filter effectiveness tracking"
 echo "   ✉️  Automated unsubscribe workflow (HTTP links + mailto handling)"
 echo "   🛡️  Crash-proof UI with comprehensive exception handling"
 echo ""
-echo "   Close the GUI window or press Ctrl+C here to stop"
+echo "   Close the QML window or press Ctrl+C here to stop"
 echo ""
 
-# Make the script executable and run the GUI
-chmod +x gmail_lm_cleaner.py
-python3 gmail_lm_cleaner.py
+# Start health check server in background
+echo "🏥 Starting health check server..."
+if ! pgrep -f "health_check.py" > /dev/null; then
+    python3 health_check.py &
+    HEALTH_PID=$!
+    echo "✓ Health check server started (PID: $HEALTH_PID)"
+    sleep 2
+else
+    echo "✓ Health check server already running"
+fi
+
+# Force offscreen mode for headless environments or when xcb is unavailable
+echo "⚠️  Running in headless mode - QML interface will run in offscreen mode"
+export QT_QPA_PLATFORM=offscreen
+
+# Set environment variables for Qt
+export QT_QPA_PLATFORM_PLUGIN_PATH="/usr/lib/x86_64-linux-gnu/qt6/plugins"
+export QML_IMPORT_PATH="qml"
+
+# Launch the QML application
+python3 qml_main.py &
+QML_PID=$!
+
+# Show QML status
+echo "✓ QML interface launched (PID: $QML_PID)"
+echo ""
+echo "📱 QML Interface Features:"
+echo "   • Smart Email Categorization with LM Studio"
+echo "   • Real-time Processing Dashboard"
+echo "   • Comprehensive Audit Logging"
+echo "   • Advanced Settings Management"
+echo ""
+echo "🌐 Web Interface (if needed): http://localhost:8080"
+echo ""
+echo "Press Ctrl+C to stop all services"
+
+# Wait for user interrupt
+wait $QML_PID
+
+# Cleanup
+echo ""
+echo "🛑 Shutting down..."
+if [ ! -z "$HEALTH_PID" ]; then
+    kill $HEALTH_PID 2>/dev/null
+    echo "✓ Health check server stopped"
+fi
 
 echo ""
 echo "👋 Gmail Cleaner stopped"

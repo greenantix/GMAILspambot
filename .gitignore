@@ -102,3 +102,37 @@ logs/categorization_history.json
 
 # Node dependencies
 frontend/node_modules
+
+# QML and Flatpak build artifacts
+*.qmlc
+.qmlcache/
+build-dir/
+.flatpak-builder/
+*.flatpak
+*.AppImage
+
+# QML compilation cache
+qml/.qmlcache/
+qml/qmldir
+
+# Flatpak build files
+flatpak/build/
+flatpak/.flatpak-builder/
+
+# Qt cache and temporary files
+.qmake.cache
+.qmake.stash
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# User-specific Qt Creator files
+*.user
+*.user.*
+
+# Source organization (keeping in git but noting)
+src/
+icons/
+
+# Flatpak bundle files
+*.flatpak

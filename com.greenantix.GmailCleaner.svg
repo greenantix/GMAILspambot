@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="mailGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4285f4;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#34a853;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="aiGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ea4335;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#fbbc04;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="64" cy="64" r="60" fill="url(#mailGradient)" stroke="#1a73e8" stroke-width="2"/>
+  
+  <!-- Mail envelope -->
+  <rect x="20" y="40" width="88" height="60" rx="8" fill="white" stroke="#1a73e8" stroke-width="2"/>
+  <polygon points="20,48 64,76 108,48" fill="none" stroke="#1a73e8" stroke-width="2"/>
+  <line x1="20" y1="48" x2="48" y2="72" stroke="#1a73e8" stroke-width="2"/>
+  <line x1="108" y1="48" x2="80" y2="72" stroke="#1a73e8" stroke-width="2"/>
+  
+  <!-- AI brain icon -->
+  <circle cx="90" cy="35" r="18" fill="url(#aiGradient)" stroke="white" stroke-width="2"/>
+  <circle cx="86" cy="31" r="3" fill="white"/>
+  <circle cx="94" cy="31" r="3" fill="white"/>
+  <circle cx="90" cy="39" r="2" fill="white"/>
+  <path d="M82,42 Q90,46 98,42" stroke="white" stroke-width="2" fill="none"/>
+  
+  <!-- Cleaning sparkles -->
+  <g fill="white" opacity="0.8">
+    <polygon points="35,25 37,30 42,28 37,33 35,38 33,33 28,28 33,30" />
+    <polygon points="95,95 97,100 102,98 97,103 95,108 93,103 88,98 93,100" />
+    <circle cx="110" cy="70" r="2"/>
+    <circle cx="25" cy="85" r="2"/>
+  </g>
+</svg>
