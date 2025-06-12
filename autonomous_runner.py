@@ -55,10 +55,11 @@ def run_batch_analysis(gmail_cleaner, export_dir, settings_path):
         return False
 
     def _batch_analysis_task():
-        export_path = stub_export_emails(export_dir, gmail_cleaner)
+        export_path = export_emails_for_analysis(export_dir, gmail_cleaner)
         if export_path:
-            gemini_output_path = stub_run_gemini_analysis(export_path, export_dir)
-            run_gemini_config_updater(gemini_output_path, settings_path)
+            gemini_output_path = run_gemini_analysis_on_export(export_path, export_dir)
+            if gemini_output_path:
+                run_gemini_config_updater(gemini_output_path, settings_path)
         return True
 
     try:
@@ -73,7 +74,7 @@ def run_realtime_processing(gmail_cleaner, email_manager, batch_size=50):
     logger.info("Triggering real-time email processing.")
 
     def _realtime_processing_task():
-        stub_process_new_emails(gmail_cleaner, email_manager, batch_size)
+        process_new_emails_batch(gmail_cleaner, email_manager, batch_size)
         return True
 
     try:
@@ -83,7 +84,8 @@ def run_realtime_processing(gmail_cleaner, email_manager, batch_size=50):
         logger.debug(traceback.format_exc())
         return False
 
-def stub_export_emails(export_dir, gmail_cleaner):
+def export_emails_for_analysis(export_dir, gmail_cleaner):
+    """Export email subjects for batch analysis with Gemini."""
     logger = get_logger(__name__)
     export_filename = f"analysis_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.txt"
     export_path = os.path.join(export_dir, export_filename)
@@ -115,7 +117,8 @@ def stub_export_emails(export_dir, gmail_cleaner):
         logger.debug(traceback.format_exc())
         return None
 
-def stub_run_gemini_analysis(export_path, output_dir):
+def run_gemini_analysis_on_export(export_path, output_dir):
+    """Run Gemini analysis on exported email subjects."""
     logger = get_logger(__name__)
     gemini_output_filename = f"gemini_output_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
     gemini_output_path = os.path.join(output_dir, gemini_output_filename)
@@ -182,7 +185,8 @@ def run_gemini_config_updater(gemini_output_path, settings_path):
         logger.error(f"An unexpected error occurred while running gemini_config_updater.py: {e}")
         logger.debug(traceback.format_exc())
 
-def stub_process_new_emails(gmail_cleaner, email_manager, batch_size=50):
+def process_new_emails_batch(gmail_cleaner, email_manager, batch_size=50):
+    """Process a batch of new emails with LLM analysis and action execution."""
     logger = get_logger(__name__)
     logger.info(f"Processing new emails (batch_size={batch_size}).")
 

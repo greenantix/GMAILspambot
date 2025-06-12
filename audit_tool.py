@@ -107,47 +107,131 @@ def print_entries(entries: List[Dict[str, Any]]):
     for entry in entries:
         print(json.dumps(entry, indent=2, ensure_ascii=False))
 
+def _log_audit_action(action_type: str, email_id: str, label: str, reason: str, dry_run: bool = False):
+    """Internal function to log audit actions to the audit log file."""
+    try:
+        settings = load_settings(SETTINGS_PATH)
+        audit_log_path = settings.get("audit", {}).get("audit_log_path", "logs/audit.log")
+        
+        # Ensure log directory exists
+        os.makedirs(os.path.dirname(audit_log_path), exist_ok=True)
+        
+        audit_entry = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "action": action_type,
+            "email_id": email_id,
+            "label": label,
+            "reason": reason,
+            "dry_run": dry_run
+        }
+        
+        with open(audit_log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(audit_entry, ensure_ascii=False) + "\n")
+            
+    except Exception as e:
+        # Don't let logging failures break the main operation
+        print(f"Warning: Failed to log audit action: {e}")
+
+def log_action(action_type: str, email_id: str, label: str, reason: str, dry_run: bool = False):
+    """Public function for logging audit actions - used by other modules."""
+    _log_audit_action(action_type, email_id, label, reason, dry_run)
+
 def restore_action(audit_entry: Dict[str, Any], gmail_manager: GmailEmailManager, logger):
     """
     Restores a Gmail action based on the audit entry.
+    Supports restoring TRASH, LABEL_AND_ARCHIVE, ARCHIVE, DELETE, and LABEL actions.
     """
     email_id = audit_entry.get("email_id")
     action_type = audit_entry.get("action")
     label = audit_entry.get("label")
+    timestamp = audit_entry.get("timestamp")
 
     if not email_id:
         logger.warning(f"Skipping restoration: 'email_id' not found in audit entry: {audit_entry}")
-        return
+        return False
 
     logger.info(f"Attempting to restore action for email_id={email_id}, action={action_type}, label={label}")
 
     try:
+        # Verify email still exists and is accessible
+        email_data = gmail_manager.get_email(email_id)
+        if not email_data:
+            logger.warning(f"Email {email_id} not found or inaccessible. Cannot restore.")
+            print(f"Warning: Email {email_id} not found or inaccessible. Cannot restore.")
+            return False
+
+        success = False
+        
         if action_type == "TRASH":
-            if gmail_manager.restore_from_trash(email_id):
+            # Restore from trash by removing TRASH label and adding INBOX
+            success = gmail_manager.modify_labels(email_id, add_labels=['INBOX'], remove_labels=['TRASH'])
+            if success:
                 logger.info(f"Successfully restored email {email_id} from trash.")
-                print(f"Restored email {email_id} from trash.")
+                print(f"✅ Restored email {email_id} from trash.")
             else:
                 logger.error(f"Failed to restore email {email_id} from trash.")
-                print(f"Error: Failed to restore email {email_id} from trash.")
+                print(f"❌ Failed to restore email {email_id} from trash.")
+                
         elif action_type == "LABEL_AND_ARCHIVE":
             if not label:
                 logger.warning(f"Skipping LABEL_AND_ARCHIVE restoration: 'label' not found in audit entry for email_id={email_id}")
-                print(f"Warning: Skipping LABEL_AND_ARCHIVE restoration for {email_id}: label not found.")
-                return
+                print(f"⚠️  Skipping LABEL_AND_ARCHIVE restoration for {email_id}: label not found.")
+                return False
 
             # To restore, add INBOX label and remove the custom label
-            if gmail_manager.modify_labels(email_id, add_labels=['INBOX'], remove_labels=[label]):
+            success = gmail_manager.modify_labels(email_id, add_labels=['INBOX'], remove_labels=[label])
+            if success:
                 logger.info(f"Successfully restored email {email_id} by adding INBOX and removing label '{label}'.")
-                print(f"Restored email {email_id} by adding INBOX and removing label '{label}'.")
+                print(f"✅ Restored email {email_id} by adding INBOX and removing label '{label}'.")
             else:
                 logger.error(f"Failed to restore email {email_id} by modifying labels (add INBOX, remove '{label}').")
-                print(f"Error: Failed to restore email {email_id} by modifying labels (add INBOX, remove '{label}').")
+                print(f"❌ Failed to restore email {email_id} by modifying labels (add INBOX, remove '{label}').")
+                
+        elif action_type == "ARCHIVE":
+            # Restore by adding INBOX label back
+            success = gmail_manager.modify_labels(email_id, add_labels=['INBOX'], remove_labels=[])
+            if success:
+                logger.info(f"Successfully restored email {email_id} from archive by adding INBOX.")
+                print(f"✅ Restored email {email_id} from archive.")
+            else:
+                logger.error(f"Failed to restore email {email_id} from archive.")
+                print(f"❌ Failed to restore email {email_id} from archive.")
+                
+        elif action_type == "LABEL":
+            if not label:
+                logger.warning(f"Skipping LABEL restoration: 'label' not found in audit entry for email_id={email_id}")
+                print(f"⚠️  Skipping LABEL restoration for {email_id}: label not found.")
+                return False
+                
+            # Remove the label that was added
+            success = gmail_manager.modify_labels(email_id, add_labels=[], remove_labels=[label])
+            if success:
+                logger.info(f"Successfully restored email {email_id} by removing label '{label}'.")
+                print(f"✅ Restored email {email_id} by removing label '{label}'.")
+            else:
+                logger.error(f"Failed to restore email {email_id} by removing label '{label}'.")
+                print(f"❌ Failed to restore email {email_id} by removing label '{label}'.")
+                
+        elif action_type == "DELETE":
+            logger.warning(f"Cannot restore permanently deleted email {email_id}.")
+            print(f"⚠️  Cannot restore permanently deleted email {email_id}.")
+            return False
+            
         else:
             logger.warning(f"Unsupported action type for restoration: {action_type} for email_id={email_id}")
-            print(f"Warning: Unsupported action type for restoration: {action_type} for email_id={email_id}")
+            print(f"⚠️  Unsupported action type for restoration: {action_type} for email_id={email_id}")
+            return False
+            
+        # Log the restoration action
+        if success:
+            _log_audit_action("RESTORE", email_id, f"RESTORED_{action_type}", f"Restored action {action_type} from {timestamp}")
+            
+        return success
+        
     except Exception as e:
         logger.error(f"An unexpected error occurred during restoration for email_id={email_id}: {e}")
-        print(f"Error: An unexpected error occurred during restoration for email_id={email_id}: {e}")
+        print(f"❌ An unexpected error occurred during restoration for email_id={email_id}: {e}")
+        return False
 
 def export_stats(entries: List[Dict[str, Any]], fmt: str):
     if fmt == "csv":

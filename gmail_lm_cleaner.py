@@ -943,9 +943,13 @@ Preview: {email_data['body_preview']}
 
 Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence": 0.0-1.0}}"""
 
-    def call_lm_studio(self, prompt, timeout=30):
-        """Call LM Studio with proper error handling."""
-        try:
+    def call_lm_studio(self, prompt, timeout=30, max_retries=3):
+        """Call LM Studio with robust error handling and retry logic."""
+        import re
+        import time
+        import random
+        
+        def _make_request():
             payload = {
                 "messages": [
                     {"role": "user", "content": prompt}
@@ -962,47 +966,115 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
             response = requests.post(
                 LM_STUDIO_URL,
                 json=payload,
-                timeout=timeout
+                timeout=timeout,
+                headers={'Content-Type': 'application/json'}
             )
             
             if response.status_code == 200:
                 result = response.json()
-                content = result['choices'][0]['message']['content']
                 
-                # Try to extract JSON from response
-                import re
-                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                # Enhanced response validation
+                if 'choices' not in result or not result['choices']:
+                    raise ValueError("Invalid LM Studio response: no choices found")
+                
+                choice = result['choices'][0]
+                if 'message' not in choice or 'content' not in choice['message']:
+                    raise ValueError("Invalid LM Studio response: missing content")
+                
+                content = choice['message']['content'].strip()
+                
+                # Try to extract JSON from response with better regex
+                json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', content, re.DOTALL)
                 if json_match:
-                    return json.loads(json_match.group())
-                else:
-                    return {"action": "KEEP", "reason": "Could not parse LLM response"}
+                    try:
+                        return json.loads(json_match.group())
+                    except json.JSONDecodeError as je:
+                        self.log(f"⚠️  JSON parse error: {je}")
+                        # Try to clean and re-parse the JSON
+                        cleaned_json = json_match.group().replace('\n', ' ').replace('\t', ' ')
+                        try:
+                            return json.loads(cleaned_json)
+                        except json.JSONDecodeError:
+                            pass
+                
+                # Fallback: try to extract action and reason from text
+                action_match = re.search(r'"action":\s*"([^"]+)"', content)
+                reason_match = re.search(r'"reason":\s*"([^"]+)"', content)
+                
+                if action_match:
+                    action = action_match.group(1)
+                    reason = reason_match.group(1) if reason_match else "LLM response parsing fallback"
+                    return {"action": action, "reason": reason, "confidence": 0.6}
+                
+                self.log(f"⚠️  Could not parse LLM response: {content[:100]}...")
+                return {"action": "KEEP", "reason": "Could not parse LLM response", "confidence": 0.3}
+                
+            elif response.status_code == 429:
+                raise requests.exceptions.RequestException("Rate limit exceeded")
+            elif response.status_code >= 500:
+                raise requests.exceptions.RequestException(f"Server error: {response.status_code}")
             else:
                 raise LLMConnectionError(
-                    f"LM Studio request failed with status {response.status_code}",
+                    f"LM Studio request failed with status {response.status_code}: {response.text}",
                     service_name="LM Studio",
                     endpoint=LM_STUDIO_URL
                 )
+        
+        # Retry logic with exponential backoff
+        for attempt in range(max_retries + 1):
+            try:
+                return _make_request()
                 
-        except requests.exceptions.Timeout:
-            raise LLMConnectionError(
-                "LM Studio request timed out",
-                service_name="LM Studio", 
-                endpoint=LM_STUDIO_URL
-            )
-        except requests.exceptions.ConnectionError:
-            raise LLMConnectionError(
-                "Could not connect to LM Studio",
-                service_name="LM Studio",
-                endpoint=LM_STUDIO_URL
-            )
-        except LLMConnectionError:
-            raise  # Re-raise our custom exception
-        except Exception as e:
-            raise LLMConnectionError(
-                f"LM Studio error: {str(e)}",
-                service_name="LM Studio",
-                endpoint=LM_STUDIO_URL
-            ) from e
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                if attempt == max_retries:
+                    raise LLMConnectionError(
+                        f"LM Studio connection failed after {max_retries + 1} attempts: {str(e)}",
+                        service_name="LM Studio",
+                        endpoint=LM_STUDIO_URL
+                    ) from e
+                
+                # Exponential backoff with jitter
+                delay = (2 ** attempt) + random.uniform(0, 1)
+                self.log(f"🔄 LM Studio request failed (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s: {str(e)}")
+                time.sleep(delay)
+                
+            except requests.exceptions.RequestException as e:
+                if "Rate limit" in str(e) or "Server error" in str(e):
+                    if attempt == max_retries:
+                        raise LLMConnectionError(
+                            f"LM Studio API error after {max_retries + 1} attempts: {str(e)}",
+                            service_name="LM Studio",
+                            endpoint=LM_STUDIO_URL
+                        ) from e
+                    
+                    # Longer delay for rate limits and server errors
+                    delay = (3 ** attempt) + random.uniform(0, 2)
+                    self.log(f"🔄 LM Studio API error (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s: {str(e)}")
+                    time.sleep(delay)
+                else:
+                    raise LLMConnectionError(
+                        f"LM Studio request error: {str(e)}",
+                        service_name="LM Studio",
+                        endpoint=LM_STUDIO_URL
+                    ) from e
+                    
+            except (ValueError, json.JSONDecodeError) as e:
+                if attempt == max_retries:
+                    self.log(f"⚠️  LM Studio response parsing failed after {max_retries + 1} attempts: {str(e)}")
+                    return {"action": "KEEP", "reason": f"Response parsing failed: {str(e)}", "confidence": 0.2}
+                
+                delay = 1 + random.uniform(0, 0.5)
+                self.log(f"🔄 LM Studio response parsing failed (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s")
+                time.sleep(delay)
+                
+            except LLMConnectionError:
+                raise  # Re-raise our custom exception
+            except Exception as e:
+                raise LLMConnectionError(
+                    f"Unexpected LM Studio error: {str(e)}",
+                    service_name="LM Studio",
+                    endpoint=LM_STUDIO_URL
+                ) from e
 
     def validate_llm_decision(self, decision):
         """Validate and sanitize LLM decision with confidence scoring."""
@@ -2024,8 +2096,11 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 self.logger.error(f"Gemini connection test failed: {str(e)}")
             return False
 
-    def analyze_with_gemini(self, subjects_file='email_subjects.txt'):
+    def analyze_with_gemini(self, subjects_file='email_subjects.txt', max_retries=3):
         """Use Gemini to analyze email subjects and generate filtering rules."""
+        import time
+        import random
+        
         if not GEMINI_API_KEY:
             print("❌ GEMINI_API_KEY not found in .env file")
             return None
@@ -2036,48 +2111,161 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
         
         print("🤖 Analyzing email subjects with Gemini...")
         
-        try:
+        # Test connection first
+        if not self.test_gemini_connection():
+            print("❌ Gemini API connection test failed")
+            return None
+        
+        def _make_gemini_request():
             # Read the subjects file
             with open(subjects_file, 'r', encoding='utf-8') as f:
                 subjects_content = f.read()
             
+            # Limit content size to avoid API limits
+            if len(subjects_content) > 100000:  # ~100KB limit
+                print("⚠️  Subject file is large, truncating for Gemini analysis...")
+                subjects_content = subjects_content[:100000] + "\n\n[Content truncated due to size limits]"
+            
             # Create the analysis prompt
             prompt = GEMINI_ANALYSIS_PROMPT.format(subjects_content=subjects_content)
             
-            # Initialize Gemini model
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            # Initialize Gemini model with safety settings
+            import google.generativeai as genai
+            genai.configure(api_key=GEMINI_API_KEY)
+            
+            # Configure generation parameters for more reliable JSON output
+            generation_config = genai.types.GenerationConfig(
+                temperature=0.1,  # Lower temperature for more consistent output
+                top_p=0.8,
+                top_k=40,
+                max_output_tokens=4096,
+                candidate_count=1
+            )
+            
+            # Safety settings to prevent blocking
+            safety_settings = [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ]
+            
+            model = genai.GenerativeModel(
+                'gemini-1.5-flash',
+                generation_config=generation_config,
+                safety_settings=safety_settings
+            )
             
             # Generate response
             response = model.generate_content(prompt)
             
-            # Parse JSON response - handle potential markdown code blocks
+            # Enhanced response validation
+            if not response or not response.text:
+                raise ValueError("Empty response from Gemini API")
+            
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
+                raise ValueError(f"Gemini blocked request: {response.prompt_feedback.block_reason}")
+            
+            return response.text.strip()
+        
+        def _parse_gemini_response(response_text):
+            """Parse Gemini response with robust JSON extraction."""
+            import re
+            
+            # Remove markdown code blocks if present
+            if response_text.startswith('```json'):
+                response_text = response_text[7:]  # Remove ```json
+            elif response_text.startswith('```'):
+                response_text = response_text[3:]   # Remove ```
+            
+            if response_text.endswith('```'):
+                response_text = response_text[:-3]  # Remove trailing ```
+            
+            response_text = response_text.strip()
+            
+            # Try direct JSON parsing first
             try:
-                response_text = response.text.strip()
-                
-                # Remove markdown code blocks if present
-                if response_text.startswith('```json'):
-                    response_text = response_text[7:]  # Remove ```json
-                elif response_text.startswith('```'):
-                    response_text = response_text[3:]   # Remove ```
-                
-                if response_text.endswith('```'):
-                    response_text = response_text[:-3]  # Remove trailing ```
-                
-                response_text = response_text.strip()
-                
-                rules = json.loads(response_text)
+                return json.loads(response_text)
+            except json.JSONDecodeError:
+                pass
+            
+            # Try to extract JSON from mixed content
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            json_matches = re.findall(json_pattern, response_text, re.DOTALL)
+            
+            for match in json_matches:
+                try:
+                    parsed = json.loads(match)
+                    # Validate it looks like our expected structure
+                    if isinstance(parsed, dict) and any(key in parsed for key in ['category_rules', 'label_schema', 'important_keywords']):
+                        return parsed
+                except json.JSONDecodeError:
+                    continue
+            
+            # Try to clean up common JSON issues
+            cleaned_text = response_text.replace('\n', ' ').replace('\t', ' ')
+            cleaned_text = re.sub(r',\s*}', '}', cleaned_text)  # Remove trailing commas
+            cleaned_text = re.sub(r',\s*]', ']', cleaned_text)  # Remove trailing commas in arrays
+            
+            try:
+                return json.loads(cleaned_text)
+            except json.JSONDecodeError:
+                raise ValueError(f"Could not parse JSON from Gemini response: {response_text[:200]}...")
+        
+        # Retry logic with exponential backoff
+        for attempt in range(max_retries + 1):
+            try:
+                response_text = _make_gemini_request()
+                rules = _parse_gemini_response(response_text)
                 print("✅ Gemini analysis complete!")
                 return rules
-            except json.JSONDecodeError:
-                print("❌ Failed to parse Gemini response as JSON")
-                print("Raw response:", response.text[:500] + "...")
-                return None
                 
-        except Exception as e:
-            print(f"❌ Gemini analysis error: {e}")
-            if hasattr(self, 'logger'):
-                self.logger.error(f"Gemini analysis failed: {str(e)}")
-            return None
+            except Exception as e:
+                error_msg = str(e).lower()
+                
+                # Check for specific error types
+                if "quota" in error_msg or "rate limit" in error_msg:
+                    if attempt == max_retries:
+                        print(f"❌ Gemini quota/rate limit exceeded after {max_retries + 1} attempts")
+                        if hasattr(self, 'logger'):
+                            self.logger.error(f"Gemini quota exceeded: {str(e)}")
+                        return None
+                    
+                    # Longer delay for quota issues
+                    delay = (5 ** attempt) + random.uniform(0, 3)
+                    print(f"⏳ Gemini quota limit, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
+                    time.sleep(delay)
+                    
+                elif "blocked" in error_msg or "safety" in error_msg:
+                    print(f"❌ Gemini safety filter blocked the request: {str(e)}")
+                    if hasattr(self, 'logger'):
+                        self.logger.error(f"Gemini safety block: {str(e)}")
+                    return None
+                    
+                elif "could not parse json" in error_msg or "json" in error_msg:
+                    if attempt == max_retries:
+                        print(f"❌ Failed to parse Gemini JSON response after {max_retries + 1} attempts")
+                        print("Raw response preview:", str(e)[-200:])
+                        if hasattr(self, 'logger'):
+                            self.logger.error(f"Gemini JSON parsing failed: {str(e)}")
+                        return None
+                    
+                    delay = 2 + random.uniform(0, 1)
+                    print(f"🔄 Gemini JSON parsing failed, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
+                    time.sleep(delay)
+                    
+                else:
+                    if attempt == max_retries:
+                        print(f"❌ Gemini analysis failed after {max_retries + 1} attempts: {str(e)}")
+                        if hasattr(self, 'logger'):
+                            self.logger.error(f"Gemini analysis failed: {str(e)}")
+                        return None
+                    
+                    delay = (2 ** attempt) + random.uniform(0, 1)
+                    print(f"🔄 Gemini error, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1}): {str(e)}")
+                    time.sleep(delay)
+        
+        return None
     
     def apply_gemini_rules(self, rules, log_callback=None):
         """Apply filtering rules generated by Gemini with integrated config updater logic."""

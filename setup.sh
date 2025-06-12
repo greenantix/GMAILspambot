@@ -37,7 +37,7 @@ else
   echo "📦 Installing core dependencies (no requirements.txt found)..."
   pip install google-auth google-auth-oauthlib google-auth-httplib2 \
     google-api-python-client google-generativeai python-dotenv \
-    requests croniter flask psutil || fail "Failed to install core dependencies"
+    requests croniter flask pandas colorama || fail "Failed to install core dependencies"
 fi
 
 # 5. Create required directories

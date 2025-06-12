@@ -154,13 +154,15 @@ class GmailLabelManager:
         """
         Cache existing labels to avoid repeated API calls.
         """
-        try:
+        def _fetch_labels():
             results = self.service.users().labels().list(userId='me').execute()
-            self._label_cache = {label['name']: label['id']
-                                 for label in results.get('labels', [])}
+            return {label['name']: label['id'] for label in results.get('labels', [])}
+        
+        try:
+            self._label_cache = exponential_backoff_retry(_fetch_labels)
             self.logger.debug(f"Label cache refreshed: {self._label_cache}")
-        except HttpError as e:
-            self.logger.error(f"Failed to refresh label cache: {e}")
+        except Exception as e:
+            self.logger.error(f"Failed to refresh label cache after retries: {e}")
             self._label_cache = {}
 
     def create_label(self, label_name: str, label_color: Optional[Dict[str, str]] = None) -> Optional[str]:
@@ -188,9 +190,11 @@ class GmailLabelManager:
         if label_color:
             label_object['color'] = label_color
 
+        def _create_label():
+            return self.service.users().labels().create(userId='me', body=label_object).execute()
+        
         try:
-            created = self.service.users().labels().create(
-                userId='me', body=label_object).execute()
+            created = exponential_backoff_retry(_create_label)
             self._label_cache[label_name] = created['id']
             self.logger.info(f"Created label '{label_name}'")
             return created['id']
@@ -200,7 +204,10 @@ class GmailLabelManager:
                 self.logger.warning(f"Label '{label_name}' already exists. Refreshing cache.")
                 self.refresh_label_cache()
                 return self._label_cache.get(label_name)
-            self.logger.error(f"Failed to create label '{label_name}': {e}")
+            self.logger.error(f"Failed to create label '{label_name}' after retries: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Failed to create label '{label_name}' after retries: {e}")
             return None
 
     def delete_label(self, label_name: str) -> bool:
@@ -328,18 +335,21 @@ class GmailEmailManager:
         Usage Example:
             emails = email_mgr.list_emails(label_ids=['INBOX'], max_results=5)
         """
-        try:
-            response = self.service.users().messages().list(
+        def _list_emails():
+            return self.service.users().messages().list(
                 userId='me',
                 labelIds=label_ids,
                 q=query,
                 maxResults=max_results
             ).execute()
+        
+        try:
+            response = exponential_backoff_retry(_list_emails)
             messages = response.get('messages', [])
             self.logger.info(f"Listed {len(messages)} emails.")
             return messages
-        except HttpError as e:
-            self.logger.error(f"Failed to list emails: {e}")
+        except Exception as e:
+            self.logger.error(f"Failed to list emails after retries: {e}")
             return []
 
     def get_email(self, msg_id: str) -> Optional[Dict[str, Any]]:
@@ -355,12 +365,15 @@ class GmailEmailManager:
         Usage Example:
             msg = email_mgr.get_email(msg_id)
         """
+        def _get_email():
+            return self.service.users().messages().get(userId='me', id=msg_id).execute()
+        
         try:
-            msg = self.service.users().messages().get(userId='me', id=msg_id).execute()
+            msg = exponential_backoff_retry(_get_email)
             self.logger.debug(f"Fetched email {msg_id}")
             return msg
-        except HttpError as e:
-            self.logger.error(f"Failed to get email {msg_id}: {e}")
+        except Exception as e:
+            self.logger.error(f"Failed to get email {msg_id} after retries: {e}")
             return None
 
     def move_to_trash(self, msg_id: str) -> bool:
@@ -376,12 +389,15 @@ class GmailEmailManager:
         Usage Example:
             email_mgr.move_to_trash(msg_id)
         """
+        def _move_to_trash():
+            return self.service.users().messages().trash(userId='me', id=msg_id).execute()
+        
         try:
-            self.service.users().messages().trash(userId='me', id=msg_id).execute()
+            exponential_backoff_retry(_move_to_trash)
             self.logger.info(f"Moved email {msg_id} to trash.")
             return True
-        except HttpError as e:
-            self.logger.error(f"Failed to move email {msg_id} to trash: {e}")
+        except Exception as e:
+            self.logger.error(f"Failed to move email {msg_id} to trash after retries: {e}")
             return False
 
     def delete_email(self, msg_id: str) -> bool:
@@ -418,12 +434,15 @@ class GmailEmailManager:
         Usage Example:
             email_mgr.restore_from_trash(msg_id)
         """
+        def _restore_from_trash():
+            return self.service.users().messages().untrash(userId='me', id=msg_id).execute()
+        
         try:
-            self.service.users().messages().untrash(userId='me', id=msg_id).execute()
+            exponential_backoff_retry(_restore_from_trash)
             self.logger.info(f"Restored email {msg_id} from trash.")
             return True
-        except HttpError as e:
-            self.logger.error(f"Failed to restore email {msg_id} from trash: {e}")
+        except Exception as e:
+            self.logger.error(f"Failed to restore email {msg_id} from trash after retries: {e}")
             return False
 
     def modify_labels(self, msg_id: str, add_labels: Optional[List[str]] = None,
