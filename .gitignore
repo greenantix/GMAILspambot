@@ -97,7 +97,8 @@ logs/
 email_subjects.txt
 exports/*.json
 logs/*.log*
-rules/SHOPPING.json
-rules/PERSONAL.json
-rules/JUNK.json
+rules/*.json
 logs/categorization_history.json
+
+# Node dependencies
+frontend/node_modules
