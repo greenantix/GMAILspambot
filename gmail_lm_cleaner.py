@@ -492,6 +492,221 @@ class EmailLearningEngine:
         
         return 'PERSONAL'  # Default fallback
 
+class EmailLearningEngine:
+    """Learning engine that analyzes email categorization patterns and suggests rule improvements."""
+    
+    def __init__(self, history_file='logs/categorization_history.json'):
+        self.history_file = history_file
+        self.categorization_history = []
+        self.load_history()
+    
+    def load_history(self):
+        """Load categorization history from JSON file."""
+        try:
+            if os.path.exists(self.history_file):
+                with open(self.history_file, 'r') as f:
+                    self.categorization_history = json.load(f)
+            else:
+                # Create directory if it doesn't exist
+                os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+                self.categorization_history = []
+        except (json.JSONDecodeError, FileNotFoundError, IOError) as e:
+            logging.warning(f"Could not load categorization history: {e}")
+            self.categorization_history = []
+    
+    def save_history(self):
+        """Save history back to JSON file."""
+        try:
+            os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+            with open(self.history_file, 'w') as f:
+                json.dump(self.categorization_history, f, indent=2)
+        except IOError as e:
+            logging.error(f"Could not save categorization history: {e}")
+    
+    def record_categorization(self, email_data, llm_decision, user_override=None):
+        """Log every decision, including the LLM's confidence and any user correction."""
+        try:
+            record = {
+                'timestamp': datetime.now().isoformat(),
+                'sender': email_data.get('sender', ''),
+                'subject': email_data.get('subject', '')[:100],  # Truncate for privacy
+                'llm_action': llm_decision.get('action', ''),
+                'llm_reason': llm_decision.get('reason', ''),
+                'llm_confidence': llm_decision.get('confidence', 0.0),
+                'user_override': user_override,
+                'final_action': user_override if user_override else llm_decision.get('action', '')
+            }
+            
+            self.categorization_history.append(record)
+            
+            # Keep only last 1000 records to prevent file from growing too large
+            if len(self.categorization_history) > 1000:
+                self.categorization_history = self.categorization_history[-1000:]
+            
+            self.save_history()
+        except Exception as e:
+            logging.error(f"Error recording categorization: {e}")
+    
+    def suggest_rule_updates(self):
+        """Analyze history for patterns and suggest rule updates."""
+        suggestions = []
+        
+        try:
+            if len(self.categorization_history) < 5:
+                return suggestions
+            
+            # Group by sender and final action
+            sender_patterns = {}
+            for record in self.categorization_history:
+                sender = record.get('sender', '').lower()
+                final_action = record.get('final_action', '')
+                
+                if sender and final_action:
+                    if sender not in sender_patterns:
+                        sender_patterns[sender] = {}
+                    
+                    if final_action not in sender_patterns[sender]:
+                        sender_patterns[sender][final_action] = 0
+                    
+                    sender_patterns[sender][final_action] += 1
+            
+            # Find consistent patterns (senders with 3+ emails in same category)
+            for sender, actions in sender_patterns.items():
+                total_emails = sum(actions.values())
+                if total_emails >= 3:
+                    # Find most common action for this sender
+                    most_common_action = max(actions, key=actions.get)
+                    most_common_count = actions[most_common_action]
+                    
+                    # If 80% or more go to the same category, suggest a rule
+                    consistency_ratio = most_common_count / total_emails
+                    if consistency_ratio >= 0.8 and most_common_action not in ['KEEP', 'REVIEW']:
+                        suggestions.append({
+                            'type': 'sender_rule',
+                            'sender': sender,
+                            'category': most_common_action,
+                            'confidence': consistency_ratio,
+                            'email_count': total_emails,
+                            'description': f"Create rule for '{sender}' → {most_common_action} (found {total_emails} emails, {consistency_ratio:.0%} consistency)"
+                        })
+            
+            # Find keyword patterns in corrected emails
+            user_corrections = [r for r in self.categorization_history if r.get('user_override')]
+            if len(user_corrections) >= 3:
+                keyword_patterns = {}
+                
+                for record in user_corrections:
+                    subject = record.get('subject', '').lower()
+                    final_action = record.get('final_action', '')
+                    
+                    # Extract potential keywords (2+ character words)
+                    words = [word for word in subject.split() if len(word) >= 2 and word.isalpha()]
+                    
+                    for word in words:
+                        if word not in keyword_patterns:
+                            keyword_patterns[word] = {}
+                        
+                        if final_action not in keyword_patterns[word]:
+                            keyword_patterns[word][final_action] = 0
+                        
+                        keyword_patterns[word][final_action] += 1
+                
+                # Find consistent keyword patterns
+                for keyword, actions in keyword_patterns.items():
+                    total_count = sum(actions.values())
+                    if total_count >= 3:
+                        most_common_action = max(actions, key=actions.get)
+                        most_common_count = actions[most_common_action]
+                        
+                        consistency_ratio = most_common_count / total_count
+                        if consistency_ratio >= 0.8 and most_common_action not in ['KEEP', 'REVIEW']:
+                            suggestions.append({
+                                'type': 'keyword_rule',
+                                'keyword': keyword,
+                                'category': most_common_action,
+                                'confidence': consistency_ratio,
+                                'email_count': total_count,
+                                'description': f"Add keyword '{keyword}' to {most_common_action} rules (found in {total_count} corrected emails, {consistency_ratio:.0%} consistency)"
+                            })
+            
+            # Sort suggestions by confidence and email count
+            suggestions.sort(key=lambda x: (x['confidence'], x['email_count']), reverse=True)
+            
+            return suggestions[:10]  # Return top 10 suggestions
+            
+        except Exception as e:
+            logging.error(f"Error generating rule suggestions: {e}")
+            return suggestions
+    
+    def detect_new_patterns(self):
+        """Analyze emails that were sent for 'REVIEW' to find clusters of similar senders/subjects."""
+        try:
+            review_emails = [r for r in self.categorization_history if r.get('final_action') == 'REVIEW']
+            
+            if len(review_emails) < 5:
+                return []
+            
+            # Group by domain patterns
+            domain_clusters = {}
+            for record in review_emails:
+                sender = record.get('sender', '')
+                if '@' in sender:
+                    domain = sender.split('@')[-1].lower()
+                    
+                    if domain not in domain_clusters:
+                        domain_clusters[domain] = []
+                    
+                    domain_clusters[domain].append(record)
+            
+            patterns = []
+            for domain, emails in domain_clusters.items():
+                if len(emails) >= 3:
+                    # Extract common subject patterns
+                    subjects = [email.get('subject', '') for email in emails]
+                    
+                    patterns.append({
+                        'type': 'domain_cluster',
+                        'domain': domain,
+                        'email_count': len(emails),
+                        'sample_subjects': subjects[:3],
+                        'description': f"Found {len(emails)} REVIEW emails from {domain} - consider creating a new category"
+                    })
+            
+            return patterns
+            
+        except Exception as e:
+            logging.error(f"Error detecting new patterns: {e}")
+            return []
+    
+    def get_learning_stats(self):
+        """Get statistics about the learning engine's performance."""
+        try:
+            total_records = len(self.categorization_history)
+            if total_records == 0:
+                return {'total_records': 0, 'accuracy_rate': 0.0, 'top_categories': []}
+            
+            # Calculate accuracy (emails where LLM decision wasn't overridden)
+            accurate_decisions = sum(1 for r in self.categorization_history if not r.get('user_override'))
+            accuracy_rate = accurate_decisions / total_records
+            
+            # Get top categories
+            category_counts = {}
+            for record in self.categorization_history:
+                category = record.get('final_action', '')
+                category_counts[category] = category_counts.get(category, 0) + 1
+            
+            top_categories = sorted(category_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+            
+            return {
+                'total_records': total_records,
+                'accuracy_rate': accuracy_rate,
+                'top_categories': top_categories
+            }
+            
+        except Exception as e:
+            logging.error(f"Error calculating learning stats: {e}")
+            return {'total_records': 0, 'accuracy_rate': 0.0, 'top_categories': []}
+
 class GmailLMCleaner:
     def __init__(self, credentials_file='config/credentials.json', token_file='config/token.json', settings_file='config/settings.json'):
         self.credentials_file = credentials_file
@@ -1834,8 +2049,98 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
         except requests.exceptions.RequestException:
             return []
     
+    def check_email_against_local_rules(self, email_data):
+        """
+        Check email against local rules/*.json files.
+        Returns decision dict if a rule matches, None otherwise.
+        """
+        try:
+            rules_dir = "rules"
+            if not os.path.exists(rules_dir):
+                return None
+            
+            sender = email_data.get('sender', '').lower()
+            subject = email_data.get('subject', '').lower()
+            body = email_data.get('body', '').lower()
+            
+            # Get all rule files
+            rule_files = [f for f in os.listdir(rules_dir) if f.endswith('.json')]
+            
+            for rule_file in rule_files:
+                try:
+                    rule_path = os.path.join(rules_dir, rule_file)
+                    with open(rule_path, 'r') as f:
+                        rule_data = json.load(f)
+                    
+                    category = rule_file.replace('.json', '').upper()
+                    
+                    # Check sender rules
+                    rule_senders = rule_data.get('senders', [])
+                    for rule_sender in rule_senders:
+                        if rule_sender.lower() in sender:
+                            return {
+                                "action": category,
+                                "reason": f"Sender matched rule in {rule_file}",
+                                "confidence": 1.0
+                            }
+                    
+                    # Check domain rules
+                    sender_domains = rule_data.get('conditions', {}).get('sender_domain', [])
+                    sender_domain = sender.split('@')[-1] if '@' in sender else ''
+                    for rule_domain in sender_domains:
+                        if rule_domain.lower() in sender_domain:
+                            return {
+                                "action": category,
+                                "reason": f"Sender domain matched rule in {rule_file}",
+                                "confidence": 1.0
+                            }
+                    
+                    # Check subject keywords
+                    subject_keywords = rule_data.get('keywords', {}).get('subject', [])
+                    for keyword in subject_keywords:
+                        if keyword.lower() in subject:
+                            return {
+                                "action": category,
+                                "reason": f"Subject keyword '{keyword}' matched rule in {rule_file}",
+                                "confidence": 0.95
+                            }
+                    
+                    # Check body keywords
+                    body_keywords = rule_data.get('keywords', {}).get('body', [])
+                    for keyword in body_keywords:
+                        if keyword.lower() in body:
+                            return {
+                                "action": category,
+                                "reason": f"Body keyword '{keyword}' matched rule in {rule_file}",
+                                "confidence": 0.9
+                            }
+                    
+                    # Check exclude keywords (if present, rule doesn't apply)
+                    exclude_keywords = rule_data.get('conditions', {}).get('exclude_keywords', [])
+                    for exclude_keyword in exclude_keywords:
+                        if exclude_keyword.lower() in subject or exclude_keyword.lower() in body:
+                            # This rule doesn't apply, continue to next rule
+                            break
+                    else:
+                        # No exclude keywords matched, continue with other checks if any
+                        pass
+                        
+                except json.JSONDecodeError as e:
+                    if hasattr(self, 'logger'):
+                        self.logger.warning(f"Invalid JSON in rule file {rule_file}: {e}")
+                except Exception as e:
+                    if hasattr(self, 'logger'):
+                        self.logger.error(f"Error processing rule file {rule_file}: {e}")
+                    
+            return None  # No rules matched
+            
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Error checking local rules: {e}")
+            return None
+
     def analyze_email_with_llm(self, email_data):
-        """Enhanced LLM analysis with better error handling."""
+        """Enhanced LLM analysis with intelligent tiered categorization."""
         try:
             # Pre-validation
             if not isinstance(email_data, dict):
@@ -1847,26 +2152,31 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 if field not in email_data:
                     return {"action": "KEEP", "reason": f"Missing required field: {field}"}
             
-            # Pre-filter based on settings
+            # Pre-filter based on settings (Tier 0: Basic Safety Checks)
             sender = email_data.get('sender', '').lower()
             
             if any(never_delete in sender for never_delete in self.settings['never_delete_senders']):
-                return {"action": "KEEP", "reason": "Sender in never-delete list"}
+                return {"action": "KEEP", "reason": "Sender in never-delete list", "confidence": 1.0}
             
             if any(auto_delete in sender for auto_delete in self.settings['auto_delete_senders']):
-                return {"action": "JUNK", "reason": "Sender in auto-delete list"}
+                return {"action": "JUNK", "reason": "Sender in auto-delete list", "confidence": 1.0}
             
-            # Check for critical emails (INBOX level)
+            # Tier 1 & 2: Deterministic Local Rules (Highest Priority)
+            # Server-side filters are applied before this function is even called
+            local_rule_decision = self.check_email_against_local_rules(email_data)
+            if local_rule_decision:
+                return self.validate_llm_decision(local_rule_decision)
+            
+            # Tier 3: Heuristic-Based Classification (Fast & High-Confidence)
             if self.is_critical_email(email_data):
-                return {"action": "INBOX", "reason": "Critical email requiring immediate attention", "confidence": 0.9}
+                return {"action": "INBOX", "reason": "Critical email detected", "confidence": 0.95}
             
-            # Check for priority emails (important but not urgent)
             if self.is_priority_email(email_data):
-                return {"action": "PRIORITY", "reason": "Important account activity for morning review", "confidence": 0.8}
+                return {"action": "PRIORITY", "reason": "Priority email detected", "confidence": 0.85}
             
-            # Check for promotional content
+            # Check for promotional content (part of heuristics)
             if self.is_promotional_email(email_data):
-                return {"action": "SHOPPING", "reason": "Promotional email", "confidence": 0.7}
+                return {"action": "SHOPPING", "reason": "Promotional email detected", "confidence": 0.75}
             
             # Prepare safe data for LLM
             safe_email_data = {
@@ -3826,13 +4136,64 @@ class GmailCleanerGUI:
         self.validate_rule_btn = ttk.Button(rule_actions_frame, text="Validate Rule", command=self.validate_rule_format)
         self.validate_rule_btn.pack(side=tk.LEFT, padx=5)
         
-        # Rule details display (now editable)
-        self.rule_details_text = scrolledtext.ScrolledText(rules_frame, height=10)
-        self.rule_details_text.pack(fill=tk.BOTH, expand=True, pady=5)
+        # User-friendly rule editor (replaces JSON editor)
+        rule_editor_frame = ttk.Frame(rules_frame)
+        rule_editor_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        # Bind text change events to enable save button
-        self.rule_details_text.bind('<KeyRelease>', self.on_rule_text_modified)
-        self.rule_details_text.bind('<Button-1>', self.on_rule_text_modified)
+        # Category selection at top
+        category_frame = ttk.Frame(rule_editor_frame)
+        category_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(category_frame, text="Category:").pack(side=tk.LEFT)
+        self.category_display_var = tk.StringVar()
+        self.category_display_label = ttk.Label(category_frame, textvariable=self.category_display_var, font=('TkDefaultFont', 10, 'bold'))
+        self.category_display_label.pack(side=tk.LEFT, padx=10)
+        
+        # Tabbed interface for different rule types
+        self.rule_notebook = ttk.Notebook(rule_editor_frame)
+        self.rule_notebook.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Sender Rules Tab
+        sender_tab = ttk.Frame(self.rule_notebook)
+        self.rule_notebook.add(sender_tab, text="Sender Rules")
+        
+        ttk.Label(sender_tab, text="Sender Rules (one per line):").pack(anchor=tk.W, pady=5)
+        self.sender_rules_text = scrolledtext.ScrolledText(sender_tab, height=6)
+        self.sender_rules_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Keyword Rules Tab
+        keyword_tab = ttk.Frame(self.rule_notebook)
+        self.rule_notebook.add(keyword_tab, text="Keyword Rules")
+        
+        # Subject keywords
+        ttk.Label(keyword_tab, text="Subject Keywords (one per line):").pack(anchor=tk.W, pady=5)
+        self.subject_keyword_rules_text = scrolledtext.ScrolledText(keyword_tab, height=4)
+        self.subject_keyword_rules_text.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Body keywords
+        ttk.Label(keyword_tab, text="Body Keywords (one per line):").pack(anchor=tk.W, pady=5)
+        self.body_keyword_rules_text = scrolledtext.ScrolledText(keyword_tab, height=4)
+        self.body_keyword_rules_text.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Advanced Rules Tab
+        advanced_tab = ttk.Frame(self.rule_notebook)
+        self.rule_notebook.add(advanced_tab, text="Advanced")
+        
+        # Domain rules
+        ttk.Label(advanced_tab, text="Sender Domains (one per line):").pack(anchor=tk.W, pady=5)
+        self.domain_rules_text = scrolledtext.ScrolledText(advanced_tab, height=3)
+        self.domain_rules_text.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Exclude keywords
+        ttk.Label(advanced_tab, text="Exclude Keywords (one per line):").pack(anchor=tk.W, pady=5)
+        self.exclude_keyword_rules_text = scrolledtext.ScrolledText(advanced_tab, height=3)
+        self.exclude_keyword_rules_text.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Bind change events to enable save button
+        for widget in [self.sender_rules_text, self.subject_keyword_rules_text, 
+                      self.body_keyword_rules_text, self.domain_rules_text, self.exclude_keyword_rules_text]:
+            widget.bind('<KeyRelease>', self.on_rule_text_modified)
+            widget.bind('<Button-1>', self.on_rule_text_modified)
+        
         self.rule_original_content = ""
         
         canvas.pack(side="left", fill="both", expand=True)
@@ -4811,70 +5172,94 @@ Debug Information:
                 messagebox.showerror("Error", f"Failed to delete label: {e}")
     
     def load_rule_details(self, event=None):
-        """Load and display rule details for selected label."""
+        """Load and display rule details for selected label in structured form."""
         label_name = self.rule_label_var.get()
         if not label_name:
             return
         
         try:
+            # Update category display
+            self.category_display_var.set(label_name)
+            
             rules_dir = "rules"
             rule_file = os.path.join(rules_dir, f"{label_name}.json")
             
-            # Reset content tracking
+            # Clear all fields first
+            self.sender_rules_text.delete(1.0, tk.END)
+            self.subject_keyword_rules_text.delete(1.0, tk.END)
+            self.body_keyword_rules_text.delete(1.0, tk.END)
+            self.domain_rules_text.delete(1.0, tk.END)
+            self.exclude_keyword_rules_text.delete(1.0, tk.END)
             
             if os.path.exists(rule_file):
                 with open(rule_file, 'r') as f:
                     rule_data = json.load(f)
                 
-                # Format the rule data for display
-                formatted_data = json.dumps(rule_data, indent=2)
+                # Populate sender rules
+                senders = rule_data.get('senders', [])
+                if senders:
+                    self.sender_rules_text.insert(1.0, '\n'.join(senders))
                 
-                self.rule_details_text.delete(1.0, tk.END)
-                self.rule_details_text.insert(1.0, formatted_data)
-                self.rule_original_content = formatted_data
+                # Populate keyword rules
+                keywords = rule_data.get('keywords', {})
+                subject_keywords = keywords.get('subject', [])
+                if subject_keywords:
+                    self.subject_keyword_rules_text.insert(1.0, '\n'.join(subject_keywords))
+                
+                body_keywords = keywords.get('body', [])
+                if body_keywords:
+                    self.body_keyword_rules_text.insert(1.0, '\n'.join(body_keywords))
+                
+                # Populate advanced rules
+                conditions = rule_data.get('conditions', {})
+                domains = conditions.get('sender_domain', [])
+                if domains:
+                    self.domain_rules_text.insert(1.0, '\n'.join(domains))
+                
+                exclude_keywords = conditions.get('exclude_keywords', [])
+                if exclude_keywords:
+                    self.exclude_keyword_rules_text.insert(1.0, '\n'.join(exclude_keywords))
                 
                 self.log(f"Loaded rule details for {label_name}")
             else:
-                # Create a template for new rule
-                template_rule = {
-                    "description": f"Rules for {label_name} category",
-                    "senders": [],
-                    "keywords": {
-                        "subject": [],
-                        "body": []
-                    },
-                    "conditions": {
-                        "sender_domain": [],
-                        "exclude_keywords": []
-                    },
-                    "actions": {
-                        "apply_label": label_name,
-                        "mark_as_read": False,
-                        "archive": False
-                    }
-                }
-                
-                formatted_template = json.dumps(template_rule, indent=2)
-                self.rule_details_text.delete(1.0, tk.END)
-                self.rule_details_text.insert(1.0, formatted_template)
-                self.rule_original_content = formatted_template
-                
-                self.log(f"No rule file found for '{label_name}' - loaded template")
+                self.log(f"No rule file found for '{label_name}' - ready to create new rule")
             
+            # Store original content for change detection
+            self.rule_original_content = self._serialize_current_rule_state()
             self.save_rule_btn.config(state='disabled')
                 
         except Exception as e:
             self.log(f"Error loading rule details: {e}")
-            self.rule_details_text.delete(1.0, tk.END)
-            self.rule_details_text.insert(1.0, f"Error loading rule details: {e}")
+            # Clear fields on error
+            for widget in [self.sender_rules_text, self.subject_keyword_rules_text,
+                          self.body_keyword_rules_text, self.domain_rules_text, self.exclude_keyword_rules_text]:
+                widget.delete(1.0, tk.END)
+                widget.insert(1.0, f"Error loading: {e}")
 
+    def _serialize_current_rule_state(self):
+        """Serialize current rule state for change detection."""
+        try:
+            return {
+                'senders': self.sender_rules_text.get(1.0, tk.END).strip(),
+                'subject_keywords': self.subject_keyword_rules_text.get(1.0, tk.END).strip(),
+                'body_keywords': self.body_keyword_rules_text.get(1.0, tk.END).strip(),
+                'domains': self.domain_rules_text.get(1.0, tk.END).strip(),
+                'exclude_keywords': self.exclude_keyword_rules_text.get(1.0, tk.END).strip()
+            }
+        except:
+            return {}
+    
     def on_rule_text_modified(self, event=None):
-        """Handle text modification in rule editor."""
-        current_content = self.rule_details_text.get(1.0, tk.END).strip()
-        if hasattr(self, 'rule_original_content') and current_content != self.rule_original_content.strip():
+        """Handle text modification in structured rule editor."""
+        try:
+            current_content = self._serialize_current_rule_state()
+            if hasattr(self, 'rule_original_content') and current_content != self.rule_original_content:
+                self.save_rule_btn.config(state='normal')
+            else:
+                self.save_rule_btn.config(state='disabled')
+        except:
+            # If there's an error, enable save button to be safe
             self.save_rule_btn.config(state='normal')
-        else:
-            self.save_rule_btn.config(state='disabled')
 
     def save_rule_details(self):
         """Save the current rule details to file."""
@@ -4926,6 +5311,13 @@ Debug Information:
                 messagebox.showerror("Validation Error", f"Missing required field: '{field}'")
                 return False
         
+        # Validate that lists are actually lists
+        list_fields = ['senders']
+        for field in list_fields:
+            if not isinstance(rule_data[field], list):
+                messagebox.showerror("Validation Error", f"'{field}' must be a list")
+                return False
+        
         # Validate keywords structure
         if 'keywords' in rule_data:
             keywords = rule_data['keywords']
@@ -4935,6 +5327,17 @@ Debug Information:
             
             if 'subject' not in keywords or 'body' not in keywords:
                 messagebox.showerror("Validation Error", "'keywords' must contain 'subject' and 'body' arrays")
+                return False
+            
+            if not isinstance(keywords['subject'], list) or not isinstance(keywords['body'], list):
+                messagebox.showerror("Validation Error", "'keywords' subject and body must be arrays")
+                return False
+        
+        # Validate conditions structure
+        if 'conditions' in rule_data:
+            conditions = rule_data['conditions']
+            if not isinstance(conditions, dict):
+                messagebox.showerror("Validation Error", "'conditions' must be an object")
                 return False
         
         # Validate actions structure
