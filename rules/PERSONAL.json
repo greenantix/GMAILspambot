@@ -30,6 +30,8 @@
     "no-reply@rentcafe.com",
     "residenceon11th@emailrelay.com",
     "system@entrata.com",
-    "info@emp.apartmentlist.com"
+    "info@emp.apartmentlist.com",
+    "zillow <no-reply@mail.zillow.com>",
+    "\"realtor.com\" <info@notifications.realtor.com>"
   ]
 }

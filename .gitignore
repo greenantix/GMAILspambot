@@ -97,3 +97,7 @@ logs/
 email_subjects.txt
 exports/*.json
 logs/*.log*
+rules/SHOPPING.json
+rules/PERSONAL.json
+rules/JUNK.json
+logs/categorization_history.json

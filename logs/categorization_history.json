@@ -3408,5 +3408,1815 @@
     "llm_confidence": 0.85,
     "user_override": null,
     "final_action": "PRIORITY"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:41.492803",
+    "sender": "AMain Hobbies <newsletters@n.amain.com>",
+    "subject": "Even More Products Added!",
+    "llm_action": "SHOPPING",
+    "llm_reason": "This is a promotional email from AMain Hobbies, advertising new products. It does not meet the criteria for INBOX or any other category.",
+    "llm_confidence": 0.9,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:42.344009",
+    "sender": "\"Eric at Bolt.new\" <ericsimons@stackblitz.com>",
+    "subject": "Level Up Your Build with Claude Sonnet 4 + Week 2 Hackathon Updates",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Keyword 'update' matched rule in SOCIAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:43.598372",
+    "sender": "Zillow <market-updates@mail.zillow.com>",
+    "subject": "Housing market updates: Cedar Rapids, 52404",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:44.303473",
+    "sender": "Best Buy <BestBuy@email.bestbuy.com>",
+    "subject": "Game on with Nintendo Switch 2 at select  GameTruck events this summer.",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:45.165172",
+    "sender": "\"AmericanTrucks | Father's Day Savings\" <americantrucks@em.americantrucks.com>",
+    "subject": "Dad's Day Deals - Unwrap the Savings!",
+    "llm_action": "SHOPPING",
+    "llm_reason": "Sender matched rule in SHOPPING.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:46.477870",
+    "sender": "\"Banggood.com\" <newsletter@deals.banggood.com>",
+    "subject": "[\ud83d\udca5Mail Only Deals!] 50Pcs Limited Bottom Price! $19.99 Drillpro Turbo Fan! $9.99 Photochromic Readin",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:47.386877",
+    "sender": "Costco Wholesale <Costco@digital.costco.com>",
+    "subject": "It's Grilling Season! Shop Costco's Summer Savings Event.",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:48.101008",
+    "sender": "GoDaddy <email@e.godaddy.com>",
+    "subject": "Your ideal domain is waiting for you here.",
+    "llm_action": "SHOPPING",
+    "llm_reason": "Promotional email detected",
+    "llm_confidence": 0.75,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:49.146418",
+    "sender": "Intrepid Studios <community@intrepidstudios.com>",
+    "subject": "Ashes of Creation: Summoner Designs, Economy Reforged",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Keyword 'update' matched rule in SOCIAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:50.164714",
+    "sender": "\"Marco's Offers\" <offers@offers.marcos.com>",
+    "subject": "\ud83c\udf55 Enjoy 30% OFF Any Order Over $20!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:51.095080",
+    "sender": "noreply@tm.openai.com",
+    "subject": "OpenAI API - API Key Disabled",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:51.791339",
+    "sender": "admin@connect.halstedfinancialservices.com",
+    "subject": "Credit One Bank, N.a./Benjamin Perschek, five minutes or less to get this resolved",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:52.594167",
+    "sender": "United Debt Settlement <info@send.youngpersonalloanman.com>",
+    "subject": "|| You\u2019re approved for a $100,000+ debt settlement evaluation!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:53.346584",
+    "sender": "Upgrade <email@e.upgrade.com>",
+    "subject": "Reset your finances",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword 'debt' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:54.116907",
+    "sender": "SiriusXM <no-reply@e.siriusxm.com>",
+    "subject": "Benjamin, Save up to $250 With This Deal! $4/mo. for 1 year for All Access",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword 'click here' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:55.032695",
+    "sender": "NerdWallet <nerdwallet@mail.nerdwallet.com>",
+    "subject": "\ud83c\udf89 High-yield savings accounts are still earning a lot",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:55.846680",
+    "sender": "Horizon Hobby <horizonhobby@email.horizonhobby.com>",
+    "subject": "Save $400 on the Spektrum NX20 DSMX Transmitter",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:56.596715",
+    "sender": "CardCash <sales@cardcash.com>",
+    "subject": "Beauty steals you can\u2019t miss \ud83d\udc84",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:57.310076",
+    "sender": "Replit <contact@mail.replit.com>",
+    "subject": "[Welcome to Replit] The next billion software creators",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Sender matched rule in SOCIAL.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:58.312204",
+    "sender": "NFL Daily <NFL@email.nfl.com>",
+    "subject": "What Concerns Remain for Pittsburgh Following Rodgers Signing?",
+    "llm_action": "NEWSLETTERS",
+    "llm_reason": "Sender matched rule in NEWSLETTERS.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "NEWSLETTERS"
+  },
+  {
+    "timestamp": "2025-06-12T03:48:59.611975",
+    "sender": "Columbia Southern University <info@send.youngpersonalloanman.com>",
+    "subject": "You\u2019re invited to apply",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:00.388877",
+    "sender": "Guitar Center <promos@email.guitarcenter.com>",
+    "subject": "Daily Pick: Uncover your deal of the day",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:01.322411",
+    "sender": "The Wealth Break <thewealthbreak@members.solofunds.com>",
+    "subject": "The $2.4 Trillion Question, Card Debt Rising, and a Surprise Job Market Turn",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword 'debt' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:02.175470",
+    "sender": "CORSAIR <corsair@updates.corsair.com>",
+    "subject": "Your Next-Level Loadout is Loading...",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:02.928584",
+    "sender": "GCX <newsletter@emails.raise.com>",
+    "subject": "Dad-Approved Deals Are Here",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:03.836838",
+    "sender": "Best Lenders Now <info@send.youngpersonalloanman.com>",
+    "subject": "Hi . I found a $1,300 e-deposit choice for your bills!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:04.715387",
+    "sender": "\"Ramirez, Dianne K - Des Moines, IA\" <Dianne.K.Ramirez@usps.gov>",
+    "subject": "FW: Updated Medical needed for Benjamin Perschek 2nd request",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Keyword 'update' matched rule in SOCIAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:06.021772",
+    "sender": "Adobe Photoshop <mail@mail.adobe.com>",
+    "subject": "Create unique animated visuals",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:06.968145",
+    "sender": "LendingTree <email@savings.lendingtree.com>",
+    "subject": "Overcome credit card debt",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:07.930778",
+    "sender": "Panera Bread <panera@m1.panerabread.com>",
+    "subject": "$20 OFF $200 catering! \u2600\ufe0f",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:08.637986",
+    "sender": "Flipboard <editorialstaff@flipboard.com>",
+    "subject": "Your Monday tech briefing",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Keyword 'app' matched rule in SOCIAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:09.696114",
+    "sender": "\"GOG.COM\" <newsletter@email3.gog.com>",
+    "subject": "GOG One-click Mods are here \ud83c\udf10",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:10.464922",
+    "sender": "Petco <Petco@e.petco.com>",
+    "subject": "New month, new savings for your pet!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:11.143280",
+    "sender": "Ray-Ban <news@e.ray-ban.com>",
+    "subject": "Introducing the New Summer Capsule",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:12.009319",
+    "sender": "UNTUCKit <untuckit@untuckit.com>",
+    "subject": "Celebrate Dad With 25% Off Everything!  \ud83c\udf81",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:12.978818",
+    "sender": "DXL <dxl@email.dxl.com>",
+    "subject": "Buy Online/Pick Up In Store And Save 20%!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:13.868371",
+    "sender": "Laura Geller <beauty@laurageller.com>",
+    "subject": "ATTN! Today Only: 45% OFF Everything\u23f0",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:14.591208",
+    "sender": "Medium Daily Digest <noreply@medium.com>",
+    "subject": "Building iOS apps with Cursor and Claude Code | Thomas Ricouard",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Keyword 'app' matched rule in SOCIAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:16.119314",
+    "sender": "American Musical Supply <ams@email.americanmusical.com>",
+    "subject": "FATHER'S DAY SALE \ud83c\udfb6 Skip the Tie, Make Dad's Day ROCK!",
+    "llm_action": "SHOPPING",
+    "llm_reason": "Keyword 'sale' matched rule in SHOPPING.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:17.374804",
+    "sender": "USPS Informed Delivery <USPSInformeddelivery@email.informeddelivery.usps.com>",
+    "subject": "Your Daily Digest for Mon, 6/9 is ready to view",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:18.024972",
+    "sender": "Keurig <keurig@em.keurig.com>",
+    "subject": "SUMMER SALE! $11.99 per box of K-Cup\u00ae pods \u2600\ufe0f",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:18.679749",
+    "sender": "Walmart Fashion <newsletters@em.walmart.com>",
+    "subject": "JUST ARRIVED: hot summer looks \ud83d\udc59 \ud83d\udd76\ufe0f",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:19.563242",
+    "sender": "\"Veterans Canteen Service, US Department of Veterans Affairs\" <VACanteen@public.govdelivery.com>",
+    "subject": "Top Brands Alert: Perfect Gifts for Dad",
+    "llm_action": "NEWSLETTERS",
+    "llm_reason": "Sender matched rule in NEWSLETTERS.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "NEWSLETTERS"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:20.927642",
+    "sender": "\"Banggood.com\" <newsletter@deals.banggood.com>",
+    "subject": "\ud83d\udca5[Hoddy Day Start Now] Up to 80% OFF+ Max $20 OFF Allowance! Only $465 KuKirin G2 Electric Scooter, ",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:21.912704",
+    "sender": "Your Grand Ave neighbors <no-reply@rs.email.nextdoor.com>",
+    "subject": "Top post: Neighbors came pounding on my door at 3:00 a.m.  Thankfully, I...",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:22.757217",
+    "sender": "Instacart <orders@instacart.com>",
+    "subject": "Tell us how we did",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:23.829477",
+    "sender": "LiteBlue <noreply@litebluemail.usps.gov>",
+    "subject": "Password Changed",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Keyword 'application' matched rule in PERSONAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:25.446162",
+    "sender": "LiteBlue <noreply@litebluemail.usps.gov>",
+    "subject": "Account password reset",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Keyword 'contact' matched rule in PERSONAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:27.211602",
+    "sender": "Walmart <newsletters@em.walmart.com>",
+    "subject": "Still thinking things over?",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:27.862690",
+    "sender": "Instacart <orders@instacart.com>",
+    "subject": "Your Instacart order receipt",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:28.796102",
+    "sender": "Darn Tough Vermont <support@darntough.com>",
+    "subject": "Force of Nature",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword 'guaranteed' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:31.426706",
+    "sender": "Walmart Reviews <feedback@reviews.walmart.com>",
+    "subject": "Review your recent purchase to earn \u2b50\ufe0f",
+    "llm_action": "SHOPPING",
+    "llm_reason": "This is a promotional email offering a reward for a recent purchase, which falls under the SHOPPING category.",
+    "llm_confidence": 0.9,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:32.596175",
+    "sender": "\"Arby's\" <noreply@order.online>",
+    "subject": "Your order from Arby's (order #fbdb226b)",
+    "llm_action": "SHOPPING",
+    "llm_reason": "Sender matched rule in SHOPPING.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:33.714297",
+    "sender": "Instacart <orders@instacart.com>",
+    "subject": "Here's a $10 credit, on us",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:34.508595",
+    "sender": "Steady Cash <info@send.youngpersonalloanman.com>",
+    "subject": "Your $3,900 offer is APPROVED",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:35.445645",
+    "sender": "Melese with GitLens <success@gitkraken.com>",
+    "subject": "\u23f0 Only a Few Days Left - Claim GitLens Pro at 33% Off!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:36.129570",
+    "sender": "Quora Digest <english-quora-digest@quora.com>",
+    "subject": "I quit smoking weed after 10 years. Never felt so awful in my life. What is happening...?",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Keyword 'app' matched rule in SOCIAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:37.395919",
+    "sender": "Call of Duty <callofduty@comms.activision.com>",
+    "subject": "Announcing Call of Duty: Black Ops 7",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:38.053769",
+    "sender": "Instacart <orders@instacart.com>",
+    "subject": "Your Walgreens order is confirmed for June 8",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:38.845042",
+    "sender": "Instacart <no-reply@instacart.com>",
+    "subject": "An address was added or updated in your Instacart account",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:41.462977",
+    "sender": "Gopuff <no-reply@noreply.gopuff.com>",
+    "subject": "Welcome to Gopuff | Experience the Magic",
+    "llm_action": "SHOPPING",
+    "llm_reason": "The email is a promotional offer from Gopuff, which falls under the SHOPPING category. It does not meet the criteria for INBOX or any other categories.",
+    "llm_confidence": 0.9,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:42.714537",
+    "sender": "NerdWallet <nerdwallet@mail.nerdwallet.com>",
+    "subject": "\ud83c\udf89 High-yield savings accounts are still earning a lot",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:43.537822",
+    "sender": "DXL <dxl@email.dxl.com>",
+    "subject": "Dad\u2019s Favorite Brands, Under $100! Get \u2018Em Now.",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:44.544724",
+    "sender": "UNTUCKit <untuckit@untuckit.com>",
+    "subject": "Now $79: Our All-Time Bestseller \ud83c\udfc6",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:45.238022",
+    "sender": "Inside NCSA <recruiting@ncsasports.org>",
+    "subject": "June 15: The game-changer date in college recruiting!",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Keyword 'game' matched rule in SOCIAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:46.461009",
+    "sender": "Keurig <keurig@em.keurig.com>",
+    "subject": "ENDING SOON! Get 10 Boxes for $100",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:47.230752",
+    "sender": "Jeff Wilson <webinars@ncsasports.org>",
+    "subject": "5 things to know when contacting coaches",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:48.045689",
+    "sender": "Equifax <info@e.equifax.com>",
+    "subject": "Benjamin: Your Credit Report Awaits",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:48.849609",
+    "sender": "Julie Burk <webinars@ncsasports.org>",
+    "subject": "Tonight! Underclassmen, don\u2019t miss this workshop",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:50.876875",
+    "sender": "Anthropic <no-reply-QhTo-XnKB9FnUiqI1Wusow@mail.anthropic.com>",
+    "subject": "[action needed] Your Anthropic API access is turned off",
+    "llm_action": "INBOX",
+    "llm_reason": "Real security breach alert from Anthropic",
+    "llm_confidence": 0.9,
+    "user_override": null,
+    "final_action": "INBOX"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:51.681836",
+    "sender": "Best Buy <BestBuy@email.bestbuy.com>",
+    "subject": "The Apple Shopping Event (and amazing tech) is only a click away... Don't pass up these deals",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:52.590336",
+    "sender": "\"Anthropic, PBC\" <invoice+statements@mail.anthropic.com>",
+    "subject": "Your receipt from Anthropic, PBC #2257-9265-1708",
+    "llm_action": "BILLS",
+    "llm_reason": "Sender matched rule in BILLS.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "BILLS"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:53.823470",
+    "sender": "admin@connect.halstedfinancialservices.com",
+    "subject": "Credit One Bank, N.a./Benjamin Perschek, five minutes or less to get this resolved",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:54.582338",
+    "sender": "\"Anthropic, PBC\" <invoice+statements@mail.anthropic.com>",
+    "subject": "Your receipt from Anthropic, PBC #2441-1955-7844",
+    "llm_action": "BILLS",
+    "llm_reason": "Sender matched rule in BILLS.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "BILLS"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:56.489317",
+    "sender": "Horizon Hobby <horizonhobby@email.horizonhobby.com>",
+    "subject": "E-flite UMX Air Tractor BNF Basic now only $149.99",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:57.827203",
+    "sender": "Petco <Petco@e.petco.com>",
+    "subject": "Dog days of summer > being sick as a dog",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:58.585189",
+    "sender": "zeeeeke on Instagram <no-reply@mail.instagram.com>",
+    "subject": "zeeeeke and 7 others recently added to their stories",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:49:59.307039",
+    "sender": "City Loans <info@send.youngpersonalloanman.com>",
+    "subject": "ATTACHMENT \ud83d\udcce$2,500 is Available",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:00.065761",
+    "sender": "Scribd <hello@hello.scribd.com>",
+    "subject": "Where will your curiosity take you?",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:00.836834",
+    "sender": "\"Walmart+\" <newsletters@em.walmart.com>",
+    "subject": "Get ready for summer with Walmart+",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:01.688211",
+    "sender": "Pizza Hut <Promotions@my.pizzahut.com>",
+    "subject": "Ben,  can we get you a $7 Deal Lover\u2019s\u00ae menu?",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:02.543818",
+    "sender": "Best Lenders Now <info@send.youngpersonalloanman.com>",
+    "subject": "\u26a0\ufe0f Confirm your $12,400 e-loan request by 11:59 PM on June 8, 2025",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:03.332330",
+    "sender": "\"Amazon.com\" <store-news@amazon.com>",
+    "subject": "You lucked out! We're treating you to some freebies",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Keyword 'schedule' matched rule in PERSONAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:04.602829",
+    "sender": "\"Marco's Offers\" <offers@offers.marcos.com>",
+    "subject": "\ud83c\udf55 Enjoy 25% Off Your Entire Order\u2014On Us! \ud83e\udd73",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:07.393058",
+    "sender": "AMain Hobbies <newsletters@n.amain.com>",
+    "subject": "See Trending Mini/Micro RC's This Week!",
+    "llm_action": "SHOPPING",
+    "llm_reason": "This is a promotional email from AMain Hobbies, advertising new RC models. It does not meet the criteria for INBOX or PRIORITY.",
+    "llm_confidence": 0.9,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:08.602017",
+    "sender": "\"HP.com\" <HP@us.shopping.hp.com>",
+    "subject": "Tech gear. Top gifts. It\u2019s all just a click away.",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:09.482280",
+    "sender": "OtterBox <no-reply@email.otterbox.com>",
+    "subject": "We dedicate this one to Dads everywhere \ud83d\udcaa\u2665\ufe0f",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:10.378604",
+    "sender": "GitHub <noreply@github.com>",
+    "subject": "Your GitHub Copilot trial ends in 14 days",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:11.123866",
+    "sender": "NerdWallet <nerdwallet@mail.nerdwallet.com>",
+    "subject": "\ud83d\udc47 Lower personal loan rates are out there",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:11.915762",
+    "sender": "Experian <support@e.usa.experian.com>",
+    "subject": "Benjamin, your FICO\u00ae Score went up!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:12.629172",
+    "sender": "Best Lenders Now <info@send.youngpersonalloanman.com>",
+    "subject": "Your medical career training application is free,",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:13.396492",
+    "sender": "Guitar Center <promos@email.guitarcenter.com>",
+    "subject": "Daily Pick: Uncover your deal of the day",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:14.134028",
+    "sender": "American Musical Supply <ams@email.americanmusical.com>",
+    "subject": "NEW THIS WEEK: Hundreds of Outlet Deals Just Added, Get Yours & Save Big!",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword 'act now' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:15.073502",
+    "sender": "DC Shoes <hello@email.dcshoes.com>",
+    "subject": "Built Like a Pro, Sized for Kids \u2013 The Stag Arrives",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:16.010363",
+    "sender": "LendingTree <email@savings.lendingtree.com>",
+    "subject": "Benjamin, still need money?",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:16.675071",
+    "sender": "zZounds News <zznews@newsletter.zzounds.com>",
+    "subject": "zZounds Best of the Week",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:17.502875",
+    "sender": "Costco Wholesale <Costco@digital.costco.com>",
+    "subject": "Time's Running Out. Last Day to Save on Member-Only Saving!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:18.351799",
+    "sender": "Humble Bundle <contact@mailer.humblebundle.com>",
+    "subject": "This Week at Humble: IGN LIVE and more!",
+    "llm_action": "NEWSLETTERS",
+    "llm_reason": "Sender matched rule in NEWSLETTERS.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "NEWSLETTERS"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:19.366198",
+    "sender": "Discount Tire <dtc-email@discounttire-email.com>",
+    "subject": "LAST DAY to save on Bridgestone, Michelin & BFG tires!",
+    "llm_action": "SHOPPING",
+    "llm_reason": "Keyword 'discount' matched rule in SHOPPING.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:20.532360",
+    "sender": "Brigit <hello@mail.hellobrigit.com>",
+    "subject": "Your weekly spend spotlight",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:21.333980",
+    "sender": "One Loan Stop <info@send.youngpersonalloanman.com>",
+    "subject": "Reminder: Accept your invitation to request $4,000",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:22.223720",
+    "sender": "\"realtor.com\" <info@notifications.realtor.com>",
+    "subject": "Ben, 3 Open Houses Coming Soon in Marion",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Sender matched rule in PERSONAL.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:23.269723",
+    "sender": "DXL <dxl@email.dxl.com>",
+    "subject": "ALL Dad Gifts Under $100 (Cross It Off Your List).",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:24.267243",
+    "sender": "UNTUCKit <untuckit@untuckit.com>",
+    "subject": "Polos From $45 |  Father\u2019s Day Gift Sale Ends Soon!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:25.187000",
+    "sender": "\"Beth | Pets for Patriots\" <media@petsforpatriots.org>",
+    "subject": "Don't look now... \ud83d\udc40 ...but they're back!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:26.242867",
+    "sender": "\"realtor.com\" <info@notifications.realtor.com>",
+    "subject": "Ben, 1 new price drop in Marion",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Sender matched rule in PERSONAL.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:27.410426",
+    "sender": "Reddit <noreply@redditmail.com>",
+    "subject": "u/IhadCorona3weeksAgo replied to your post in r/vibecoding",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:28.193908",
+    "sender": "Medium Daily Digest <noreply@medium.com>",
+    "subject": "This AI Witch Hunt Has to Stop | Victoria Suzanne in The Writing Cooperative",
+    "llm_action": "NEWSLETTERS",
+    "llm_reason": "Sender matched rule in NEWSLETTERS.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "NEWSLETTERS"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:29.161225",
+    "sender": "\"Muck Boot Co.\" <noreply@em.muckbootcompany.com>",
+    "subject": "Just Like Dad - Down to His Boots",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Keyword 'message' matched rule in SOCIAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:30.084442",
+    "sender": "\"realtor.com\" <info@notifications.realtor.com>",
+    "subject": "Ben, 2 new listings match your search in Marion",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Sender matched rule in PERSONAL.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:31.285673",
+    "sender": "Keurig <keurig@em.keurig.com>",
+    "subject": "Coffee Math You\u2019ll Love: 10 Boxes for $100",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:32.090061",
+    "sender": "SUBWAY Restaurants <news@subs.subway.com>",
+    "subject": "\ud83d\udce2 This is it \ud83d\udce2 Your $2 off deal is gone after today",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:32.751478",
+    "sender": "Indie Gala <support@indiegala.com>",
+    "subject": "Wingardium Leviosa\ud83e\uddd9\u200d\u2642\ufe0f It's Harry Potter & the magical Wizarding Week Sale!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:33.490438",
+    "sender": "Walmart Home <newsletters@em.walmart.com>",
+    "subject": "Trending: sunshine-ready home upgrades \ud83d\uddc4\ufe0f\ud83e\uddfa",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:34.252452",
+    "sender": "Google Cloud Billing Alerts <CloudPlatform-noreply@google.com>",
+    "subject": "100% of budget reached",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:35.023171",
+    "sender": "Walmart <newsletters@em.walmart.com>",
+    "subject": "Save $1.50 on AND1 Men's Cushion Quarter Socks...",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:35.945335",
+    "sender": "Google Cloud Billing Alerts <CloudPlatform-noreply@google.com>",
+    "subject": "90% of budget reached",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:36.595568",
+    "sender": "Google Cloud Billing Alerts <CloudPlatform-noreply@google.com>",
+    "subject": "50% of budget reached",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:37.294628",
+    "sender": "Redis <no-reply@redis.com>",
+    "subject": "Your free database will be deleted soon unless you take action now",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:38.119869",
+    "sender": "Reddit <noreply@redditmail.com>",
+    "subject": "\"I paid for the $100 Claude Max plan so you don't have to - an honest review\"",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:38.915942",
+    "sender": "Reddit <noreply@redditmail.com>",
+    "subject": "u/trashname4trashgame replied to your post in r/vibecoding",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:39.832182",
+    "sender": "Google Flights <noreply-travel@google.com>",
+    "subject": "Your tracked route: Portland to Cedar Rapids flights from $78",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:40.515390",
+    "sender": "Best Lenders Now <info@send.youngpersonalloanman.com>",
+    "subject": "Impressive! You received a $28,500 loan request,",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:41.463532",
+    "sender": "Reddit <noreply@reddit.com>",
+    "subject": "Your Reddit password is updated",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:42.128314",
+    "sender": "Lovable <hi@lovable.dev>",
+    "subject": "Start building Lovable apps with full stack features in < 5 minutes",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:43.068154",
+    "sender": "Reddit <noreply@reddit.com>",
+    "subject": "Reddit password reset",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:43.918200",
+    "sender": "\"Anthropic, PBC\" <invoice+statements@mail.anthropic.com>",
+    "subject": "Your receipt from Anthropic, PBC #2618-1774-4688",
+    "llm_action": "BILLS",
+    "llm_reason": "Sender matched rule in BILLS.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "BILLS"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:45.075289",
+    "sender": "DXL <dxl@email.dxl.com>",
+    "subject": "Dad\u2019s Day: 8 Days Away. Great Gift Ideas Inside.",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:45.824547",
+    "sender": "UNTUCKit <untuckit@untuckit.com>",
+    "subject": "Our No. 1 White Shirt Is Now $79 \ud83e\udd47",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:46.601866",
+    "sender": "Petco <Petco@e.petco.com>",
+    "subject": "Sweet as Watermelon \u2013 Your Pet\u2019s Summer Spa Awaits \ud83c\udf49",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:47.410415",
+    "sender": "Optima Tax Relief <info@send.youngpersonalloanman.com>",
+    "subject": "(1) New IRS Relief Package: View now",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:48.163582",
+    "sender": "Experian <support@e.usa.experian.com>",
+    "subject": "Benjamin, see the best credit cards for members like you",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:48.867528",
+    "sender": "Keurig <keurig@em.keurig.com>",
+    "subject": "HOURS LEFT! Buy 3+ boxes of K-Cup\u00ae pods for $12.99 each",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:49.554030",
+    "sender": "Quora Digest <english-quora-digest@quora.com>",
+    "subject": "I received 68 bitcoin from a random address. What should I do, call the police?",
+    "llm_action": "NEWSLETTERS",
+    "llm_reason": "Sender matched rule in NEWSLETTERS.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "NEWSLETTERS"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:50.663992",
+    "sender": "Equifax <info@e.equifax.com>",
+    "subject": "You're Invited: Start your 7-Day Trial for $1 when you sign up for Equifax Complete Premier",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:51.509534",
+    "sender": "Credit Karma <mail@mail10.creditkarma.com>",
+    "subject": "Your BMG MONEY rate analysis is ready, Benjamin",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword 'loan' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:52.334054",
+    "sender": "NerdWallet <nerdwallet@mail.nerdwallet.com>",
+    "subject": "\ud83d\udc47 Lower personal loan rates are out there",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:52.988257",
+    "sender": "GitHub <noreply@github.com>",
+    "subject": "[GitHub] A fine-grained personal access token has been added to your account",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:53.662989",
+    "sender": "noreply-google-cloud-compliance@google.com",
+    "subject": "Publicly accessible Google API key for Leo Runner (id: acas-runner)",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:54.588392",
+    "sender": "GitHub <support@github.com>",
+    "subject": "[greenantix/gemini-mcp-desktop-client] Possible valid secrets detected",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:55.593610",
+    "sender": "Best Buy Apple Shopping Event <BestBuy@email.bestbuy.com>",
+    "subject": "Drumroll please, the Apple Shopping Event is upon us - come this way for massive SAVINGS on amazing ",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:56.309624",
+    "sender": "Facebook <page-notification-noreply@support.facebook.com>",
+    "subject": "(Moving Through Network): Weekly Facebook Page update for Moving Through Network",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:57.115153",
+    "sender": "Petco Membership <Petco@e.petco.com>",
+    "subject": "Limited-time offer! Get $25 in rewards your first month",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:57.912535",
+    "sender": "Walmart MoneyCard <info@send.youngpersonalloanman.com>",
+    "subject": "Activate your Walmart MoneyCard for your cash back rewards",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:58.779185",
+    "sender": "Instagram <no-reply@mail.instagram.com>",
+    "subject": "Your June 7 reels of the day",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:50:59.712208",
+    "sender": "ASUS United States <noreply@nedm.asus.com>",
+    "subject": "\ud83d\udedc ASUS Router Month - Get 10% Off Routers & Peripherals Sitewide!",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword 'click here' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:00.621574",
+    "sender": "GasBuddy <et-reply@email.gasbuddy.com>",
+    "subject": "You\u2019re invited: Join e-Rewards today.",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:01.497236",
+    "sender": "Humble Bundle <contact@mailer.humblebundle.com>",
+    "subject": "Meet Miyamoto Usagi\u2014the greatest samurai alive",
+    "llm_action": "NEWSLETTERS",
+    "llm_reason": "Sender matched rule in NEWSLETTERS.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "NEWSLETTERS"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:02.866535",
+    "sender": "Costco Wholesale <Costco@digital.costco.com>",
+    "subject": "See How You Can Save on Everyday Essentials!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:04.007479",
+    "sender": "eufy <newsletter@news.eufylife.com>",
+    "subject": "\ud83d\udd14 New Release: eufy Robot Vacuum E25 Out Now!",
+    "llm_action": "NEWSLETTERS",
+    "llm_reason": "Sender matched rule in NEWSLETTERS.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "NEWSLETTERS"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:05.007815",
+    "sender": "\"Marco's Offers\" <offers@offers.marcos.com>",
+    "subject": "\ud83c\udf55 50% OFF PIZZA! This Week Only.",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:05.924115",
+    "sender": "Fandango at Home <fandangoathome@movies.fandango.com>",
+    "subject": "\ud83d\udc7b\ud83d\udeabYour Weekend Movie & TV Deals",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:06.765197",
+    "sender": "admin@outreach.halstedfinancial.com",
+    "subject": "Benjamin Perschek, payment plans for Credit One Bank, N.a. account to fit your budget",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:07.441075",
+    "sender": "Meta Horizon <quest@campaigns.meta.com>",
+    "subject": "Marvel's Deadpool VR coming late 2025",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:08.118241",
+    "sender": "Guitar Center <promos@email.guitarcenter.com>",
+    "subject": "A History of the Akai Professional MPC",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:08.835862",
+    "sender": "Upgrade <email@e.upgrade.com>",
+    "subject": "Loan invitation for, Benjamin",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword 'loan' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:09.509311",
+    "sender": "Meta Horizon <do_not_reply@email.meta.com>",
+    "subject": "New notifications arriving in headset.",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:10.401110",
+    "sender": "\"ID.me Shop\" <shop@marketing.id.me>",
+    "subject": "\ud83e\udd11 Hero discounts: Shop StubHub, Reebok, LG, YETI and more to save",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:11.167145",
+    "sender": "DoorDash Support <doordash@qemailserver.com>",
+    "subject": "DoorDash Support",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:11.906902",
+    "sender": "Carvana <DoNotReply@mail.carvana.com>",
+    "subject": "Ben, we have a surprise for you!",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:12.863256",
+    "sender": "NerdWallet <nerdwallet@mail.nerdwallet.com>",
+    "subject": "Know you have the cheapest car insurance \ud83d\ude99",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:13.651047",
+    "sender": "Horizon Hobby <horizonhobby@email.horizonhobby.com>",
+    "subject": "RealFlight Evolution RC Simulator now only $179.99",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:14.579977",
+    "sender": "DoorDash <no-reply@doordash.com>",
+    "subject": "Apologies for the issue with your order from Arby's - 8757",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:15.402989",
+    "sender": "\"Papa Murphy's\" <no-reply@myslice.papamurphys.com>",
+    "subject": "\ud83c\udf55 $8.99 Summer Selects. The Best Pizza Deal Under the Sun. \ud83c\udf55",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:16.063943",
+    "sender": "\"Arby's\" <noreply@order.online>",
+    "subject": "Your order from Arby's (order #e3f687d6)",
+    "llm_action": "SHOPPING",
+    "llm_reason": "Sender matched rule in SHOPPING.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:17.100879",
+    "sender": "Guitar Center <promos@email.guitarcenter.com>",
+    "subject": "Daily Pick: Uncover your deal of the day",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:18.048287",
+    "sender": "Experian Alerts <support@s.usa.experian.com>",
+    "subject": "Benjamin, your FICO\u00ae Score has been updated",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Keyword 'update' matched rule in SOCIAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:19.195402",
+    "sender": "DraftKings <draftkings@d.email.draftkings.com>",
+    "subject": "greenantix, sign up for DK Horse and earn a $20 Sportsbook Bonus Bet when you wager $5! \ud83c\udfc7",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:19.974696",
+    "sender": "Houston Christian University <info@send.youngpersonalloanman.com>",
+    "subject": "Your tuition fee just dropped",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:22.241617",
+    "sender": "LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+    "subject": "\u201cassistant store manager\u201d: Staples US Retail - Assistant Store Manager",
+    "llm_action": "NEWSLETTERS",
+    "llm_reason": "Keyword 'digest' matched rule in NEWSLETTERS.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "NEWSLETTERS"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:23.367632",
+    "sender": "iHeart Daily Rewind <newsletters@e.iheart.com>",
+    "subject": "Sydney Sweeney Reveals Who She's 'Spending More Time With' Post-Breakup",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Keyword 'post' matched rule in SOCIAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:25.073655",
+    "sender": "The Substack Post <post+the-weekender@substack.com>",
+    "subject": "\u201cDo you only write when you\u2019re a little drunk?\u201d",
+    "llm_action": "SOCIAL",
+    "llm_reason": "Keyword 'post' matched rule in SOCIAL.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SOCIAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:26.312171",
+    "sender": "Humble Bundle <contact@mailer.humblebundle.com>",
+    "subject": "Role-playing game discounts inside, no persuasion rolls needed!",
+    "llm_action": "SHOPPING",
+    "llm_reason": "Keyword 'discount' matched rule in SHOPPING.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "SHOPPING"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:27.448619",
+    "sender": "\"GOG.COM\" <newsletter@email3.gog.com>",
+    "subject": "NPUSCFCV9AX4EKK9ET expires in 24 HOURS",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:28.627648",
+    "sender": "LendingTree <email@savings.lendingtree.com>",
+    "subject": "Benjamin, need a personal loan?",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:29.457470",
+    "sender": "Costco Wholesale <Costco@digital.costco.com>",
+    "subject": "STARTS TODAY: NEW In-Warehouse Hot Buys!",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:30.250237",
+    "sender": "Redfin <listings@redfin.com>",
+    "subject": "A Cedar Rapids home for you at $145K, and 16 other updates",
+    "llm_action": "JUNK",
+    "llm_reason": "Keyword '$' matched rule in JUNK.json",
+    "llm_confidence": 0.95,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:31.073256",
+    "sender": "\"realtor.com\" <info@notifications.realtor.com>",
+    "subject": "Ben, 4 sold listings in Marion",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Sender matched rule in PERSONAL.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:32.437944",
+    "sender": "\"realtor.com\" <info@notifications.realtor.com>",
+    "subject": "Ben, 4 Open Houses Coming Soon in Marion",
+    "llm_action": "PERSONAL",
+    "llm_reason": "Sender matched rule in PERSONAL.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "PERSONAL"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:33.483478",
+    "sender": "UNTUCKit <untuckit@untuckit.com>",
+    "subject": "Starting At $45 | 5 Father\u2019s Day Gifts On Sale",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
+  },
+  {
+    "timestamp": "2025-06-12T03:51:34.247552",
+    "sender": "DXL <dxl@email.dxl.com>",
+    "subject": "Top Picks For Dad. (Father\u2019s Day Is Next Weekend).",
+    "llm_action": "JUNK",
+    "llm_reason": "Sender matched rule in JUNK.json",
+    "llm_confidence": 1.0,
+    "user_override": null,
+    "final_action": "JUNK"
   }
 ]
