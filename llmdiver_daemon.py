@@ -120,8 +120,30 @@ class LLMStudioClient:
         self.url = config["llm_integration"]["url"]
         self.model = config["llm_integration"]["model"]
     
+    def chunk_text(self, text: str, chunk_size: int = 16000) -> List[str]:
+        """Split text into chunks that fit within context window"""
+        words = text.split()
+        chunks = []
+        current_chunk = []
+        current_length = 0
+        
+        for word in words:
+            word_length = len(word) + 1  # +1 for space
+            if current_length + word_length > chunk_size and current_chunk:
+                chunks.append(" ".join(current_chunk))
+                current_chunk = [word]
+                current_length = word_length
+            else:
+                current_chunk.append(word)
+                current_length += word_length
+        
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+        
+        return chunks
+
     def analyze_repo_summary(self, summary_text: str) -> str:
-        """Send repo summary to LM Studio for analysis"""
+        """Send repo summary to LM Studio for analysis with auto-chunking"""
         system_prompt = """You are an expert code auditor. Analyze the repository summary and identify:
 
 1. TODO/FIXME items that need attention
@@ -140,11 +162,45 @@ Format your response as:
 
 Be specific and actionable in your recommendations."""
 
+        # Check if chunking is enabled and needed
+        enable_chunking = self.config["llm_integration"].get("enable_chunking", False)
+        chunk_size = self.config["llm_integration"].get("chunk_size", 16000)
+        
+        if enable_chunking and len(summary_text) > chunk_size:
+            logging.info(f"Large repository detected ({len(summary_text)} chars), using chunking...")
+            chunks = self.chunk_text(summary_text, chunk_size)
+            all_analyses = []
+            
+            for i, chunk in enumerate(chunks):
+                logging.info(f"Analyzing chunk {i+1}/{len(chunks)}")
+                chunk_prompt = f"Analyze this repository section ({i+1}/{len(chunks)}):\n\n{chunk}"
+                
+                analysis = self._send_single_request(system_prompt, chunk_prompt)
+                if analysis.startswith("Analysis failed:") or analysis.startswith("LM Studio API error:"):
+                    return analysis  # Return error immediately
+                
+                all_analyses.append(f"## Chunk {i+1}/{len(chunks)} Analysis\n{analysis}")
+            
+            # Combine analyses
+            combined = "\n\n".join(all_analyses)
+            
+            # Send combined analysis for final summary
+            final_prompt = f"Summarize and consolidate these code audit findings:\n\n{combined}"
+            return self._send_single_request(
+                "You are consolidating multiple code audit reports. Combine similar findings and prioritize the most critical issues.",
+                final_prompt
+            )
+        else:
+            # Single request for small repositories
+            return self._send_single_request(system_prompt, f"Analyze this repository:\n\n{summary_text}")
+    
+    def _send_single_request(self, system_prompt: str, user_prompt: str) -> str:
+        """Send a single request to LM Studio"""
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Analyze this repository:\n\n{summary_text}"}
+                {"role": "user", "content": user_prompt}
             ],
             "temperature": self.config["llm_integration"]["temperature"],
             "max_tokens": self.config["llm_integration"]["max_tokens"],
@@ -157,11 +213,17 @@ Be specific and actionable in your recommendations."""
             result = response.json()
             return result["choices"][0]["message"]["content"]
         except requests.exceptions.Timeout:
-            logging.error("LM Studio API timeout - repository too large for analysis")
-            return "Analysis timed out: Repository too large for LLM processing"
+            logging.error("LM Studio API timeout")
+            return "Analysis timed out: Request took too long"
         except requests.exceptions.HTTPError as e:
-            logging.error(f"LM Studio HTTP error: {e.response.status_code} - {e.response.text}")
-            return f"LM Studio API error: {e.response.status_code}"
+            error_text = ""
+            try:
+                error_data = e.response.json()
+                error_text = error_data.get("error", e.response.text)
+            except:
+                error_text = e.response.text
+            logging.error(f"LM Studio HTTP error: {e.response.status_code} - {error_text}")
+            return f"LM Studio API error: {e.response.status_code} - {error_text}"
         except Exception as e:
             logging.error(f"LM Studio API error: {e}")
             return f"Analysis failed: {e}"
