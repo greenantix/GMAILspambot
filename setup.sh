@@ -41,7 +41,7 @@ else
 fi
 
 # 5. Create required directories
-for d in logs exports rules data; do
+for d in logs exports rules data config; do
   if [ ! -d "$d" ]; then
     echo "📁 Creating directory: $d"
     mkdir -p "$d" || fail "Failed to create directory $d"
@@ -49,6 +49,13 @@ for d in logs exports rules data; do
     echo "✅ Directory exists: $d"
   fi
 done
+
+# Create rules directory structure for new users
+if [ ! -f "rules/.initialized" ]; then
+  echo "📋 Initializing rules directory structure..."
+  echo "Rules directory initialized on $(date)" > "rules/.initialized"
+  echo "✅ Rules directory prepared for first-time use"
+fi
 
 # 6. Set permissions for scripts
 chmod +x *.py *.sh
@@ -144,11 +151,13 @@ echo
 echo "✅ Setup complete!"
 echo
 echo "Next steps:"
-echo "1. Review and update your .env or settings.json as needed."
-echo "2. Copy and enable the systemd services as shown above."
-echo "3. To start the main runner: sudo systemctl start gmail-autonomy-runner"
-echo "4. To start the health check API: sudo systemctl start gmail-autonomy-health"
-echo "5. Logs are in the 'logs/' directory and will be rotated automatically."
+echo "1. Place your Gmail API credentials.json in the config/ directory."
+echo "2. Delete config/token.json if it exists (new scopes require re-authentication)."
+echo "3. Review and update your .env or settings.json as needed."
+echo "4. Copy and enable the systemd services as shown above."
+echo "5. To start the main runner: sudo systemctl start gmail-autonomy-runner"
+echo "6. To start the health check API: sudo systemctl start gmail-autonomy-health"
+echo "7. Logs are in the 'logs/' directory and will be rotated automatically."
 echo
 echo "To rerun this setup, simply execute ./setup.sh again."
 echo

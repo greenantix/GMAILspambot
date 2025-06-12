@@ -70,6 +70,13 @@ if [ ! -f "config/credentials.json" ]; then
     read -p "Press Enter when you've added config/credentials.json, or Ctrl+C to exit..."
 fi
 
+# Check for token.json and warn about new scopes
+if [ -f "config/token.json" ]; then
+    echo "⚠️  Found existing token.json - you may need to re-authenticate"
+    echo "   New scopes have been added (gmail.send for unsubscribe emails)"
+    echo "   If you encounter auth errors, delete config/token.json and restart"
+fi
+
 # Check if settings.json exists in config, if not create a default one
 if [ ! -f "config/settings.json" ]; then
     echo "📄 Creating default config/settings.json..."
@@ -121,11 +128,15 @@ else
 fi
 
 echo ""
-echo "🎯 Starting Gmail Cleaner GUI with Enhanced Features..."
+echo "🎯 Starting Gmail Cleaner GUI with Intelligence Features..."
 echo "   🚨 INBOX: Critical emails only (security alerts, personal messages)"
-echo "   ⚡ PRIORITY: Important but not urgent (GitHub, Zillow, bank statements)"
+echo "   ⚡ PRIORITY: Important but not urgent (GitHub, Zillow, bank statements)"  
 echo "   📦 Other categories: Bills, Shopping, Newsletters, Social, Personal, Junk"
-echo "   🔧 New: Filter-first processing for 75k+ email backlogs"
+echo "   🔧 Filter-first processing for massive email backlogs"
+echo "   🤖 Machine learning-like pattern recognition and rule suggestions"
+echo "   📊 Real-time analytics with filter effectiveness tracking"
+echo "   ✉️  Automated unsubscribe workflow (HTTP links + mailto handling)"
+echo "   🛡️  Crash-proof UI with comprehensive exception handling"
 echo ""
 echo "   Close the GUI window or press Ctrl+C here to stop"
 echo ""

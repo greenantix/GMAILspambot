@@ -73,9 +73,20 @@ error.log
 *.temp
 temp/
 tmp/
+
+# Project-specific excludes
 claude.md
-claude.md
+CLAUDE-ENHANCEMENT-V2.md
 IMPLEMENTATION_SUMMARY.md
-config/token_backup_20250611_160809.json
-plan.md
-plan3.md
+SLEEP_REPORT.md
+config/token_backup_*.json
+plan*.md
+
+# Application data directories
+data/
+exports/
+rules/.initialized
+
+# Systemd and deployment files
+systemd_units/
+gmail-autonomy.logrotate

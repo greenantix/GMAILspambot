@@ -38,7 +38,8 @@ logger = get_logger(__name__)
 # If modifying these scopes, delete the file config/token.json.
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.modify',
-    'https://www.googleapis.com/auth/gmail.settings.basic'
+    'https://www.googleapis.com/auth/gmail.settings.basic',
+    'https://www.googleapis.com/auth/gmail.send'
 ]
 
 # =========================

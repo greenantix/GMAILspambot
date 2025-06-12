@@ -30,7 +30,8 @@ from logging.handlers import RotatingFileHandler
 # If modifying these scopes, delete the token.json file.
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.modify',
-    'https://www.googleapis.com/auth/gmail.settings.basic'
+    'https://www.googleapis.com/auth/gmail.settings.basic',
+    'https://www.googleapis.com/auth/gmail.send'
 ]
 
 # Load environment variables
@@ -2165,6 +2166,9 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 log_callback(f"🚀 Processing 75k+ emails efficiently!")
                 log_callback(f"📊 Fetching {fetch_size} emails per API call, processing {batch_size} at a time")
             
+            retry_count = 0
+            max_retries = 3
+            
             while True:
                 try:
                     # Fetch large chunk of email IDs efficiently
@@ -2174,11 +2178,26 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                         maxResults=fetch_size,  # Fetch efficiently
                         pageToken=next_page_token
                     ).execute()
+                    retry_count = 0  # Reset retry counter on success
                 except Exception as e:
                     if log_callback:
                         log_callback(f"❌ Error fetching email batch: {e}")
                     stats['errors'] += 1
-                    break
+                    retry_count += 1
+                    
+                    if retry_count >= max_retries:
+                        if log_callback:
+                            log_callback(f"❌ Failed to fetch emails after {max_retries} retries. Stopping processing.")
+                        break
+                    
+                    # Wait before retrying (exponential backoff)
+                    wait_time = 2 ** retry_count
+                    if log_callback:
+                        log_callback(f"⏳ Retrying in {wait_time} seconds... (attempt {retry_count}/{max_retries})")
+                    
+                    import time
+                    time.sleep(wait_time)
+                    continue  # Retry the same page
 
                 messages = results.get('messages', [])
                 if not messages:
@@ -2939,17 +2958,73 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
                 return True
                 
             elif unsubscribe_info.get('emails'):
-                # For email-based unsubscribing, we could compose and send an email
-                # For now, we'll just log it
+                # Send unsubscribe email automatically
                 email = unsubscribe_info['emails'][0]
-                self.logger.info(f"Unsubscribe email for {sender}: {email}")
-                # TODO: Implement automatic email sending for unsubscribe
-                return True
+                self.logger.info(f"Sending unsubscribe email for {sender} to: {email}")
+                
+                success = self.send_unsubscribe_email(email, sender)
+                if success:
+                    self.logger.info(f"Successfully sent unsubscribe email for {sender}")
+                    return True
+                else:
+                    self.logger.warning(f"Failed to send unsubscribe email for {sender}")
+                    # Fall back to opening the email client
+                    import webbrowser
+                    mailto_url = f"mailto:{email}?subject=Unsubscribe&body=Please unsubscribe me from this mailing list."
+                    webbrowser.open(mailto_url)
+                    self.logger.info(f"Opened email client with unsubscribe message for {sender}")
+                    return True
             
             return False
             
         except Exception as e:
             self.logger.error(f"Error attempting unsubscribe for {sender}: {e}")
+            return False
+
+    def send_unsubscribe_email(self, unsubscribe_email, sender):
+        """
+        Send an unsubscribe email using the Gmail API.
+        Returns True if successful, False otherwise.
+        """
+        try:
+            import email.mime.text
+            import email.mime.multipart
+            import base64
+            
+            # Create the email message
+            message = email.mime.multipart.MIMEMultipart()
+            message['to'] = unsubscribe_email
+            message['from'] = 'me'  # Gmail API uses 'me' for the authenticated user
+            message['subject'] = 'Unsubscribe Request'
+            
+            # Email body
+            body = f"""Hello,
+
+Please unsubscribe my email address from your mailing list.
+
+This is an automated unsubscribe request sent from my Gmail intelligent cleaner.
+
+Best regards
+"""
+            
+            message.attach(email.mime.text.MIMEText(body, 'plain'))
+            
+            # Encode the message
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+            
+            # Send via Gmail API
+            send_message = {'raw': raw_message}
+            result = self.service.users().messages().send(userId='me', body=send_message).execute()
+            
+            if result:
+                self.logger.info(f"Unsubscribe email sent successfully to {unsubscribe_email} for sender {sender}")
+                return True
+            else:
+                self.logger.error(f"Failed to send unsubscribe email to {unsubscribe_email}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error sending unsubscribe email to {unsubscribe_email}: {e}")
             return False
             
     def auto_evolve_system(self, log_callback=None):
@@ -3527,8 +3602,22 @@ class GmailCleanerGUI:
         """Thread function for processing emails."""
         try:
             self.cleaner.process_inbox(log_callback=self.log)
+            self.log("✅ Email processing completed successfully!")
         except Exception as e:
-            self.log(f"Error processing emails: {e}")
+            error_msg = f"Error processing emails: {e}"
+            self.log(f"❌ {error_msg}")
+            self.root.after(0, lambda: messagebox.showerror("Processing Error", f"An error occurred while processing emails:\n\n{e}\n\nCheck the logs for more details."))
+        finally:
+            # Restore UI state
+            self.root.after(0, self.restore_process_ui_state)
+    
+    def restore_process_ui_state(self):
+        """Restore UI state after email processing."""
+        try:
+            if hasattr(self, 'process_btn'):
+                self.process_btn.config(state='normal', text="Process Emails")
+        except Exception as e:
+            print(f"Error restoring process UI state: {e}")
     
     def export_subjects(self):
         """Export email subjects for analysis."""
@@ -3546,13 +3635,31 @@ class GmailCleanerGUI:
         """Thread function for exporting subjects."""
         try:
             self.log("🔍 Starting email subjects export...")
-            self.cleaner.export_subjects(max_emails=1000, days_back=30)
-            self.log("✅ Export complete! Check email_subjects.txt file")
-            self.log("\nUpload this file to Gemini and ask:")
-            self.log("'Analyze these email subjects and create better filtering rules'")
-            self.log("'Categorize into: INBOX, BILLS, SHOPPING, NEWSLETTERS, SOCIAL, PERSONAL, JUNK'")
+            result = self.cleaner.export_subjects(max_emails=1000, days_back=30)
+            if result:
+                self.log("✅ Export complete! Check email_subjects.txt file")
+                self.log("\nUpload this file to Gemini and ask:")
+                self.log("'Analyze these email subjects and create better filtering rules'")
+                self.log("'Categorize into: INBOX, BILLS, SHOPPING, NEWSLETTERS, SOCIAL, PERSONAL, JUNK'")
+            else:
+                error_msg = "Export failed - no subjects were exported"
+                self.log(f"❌ {error_msg}")
+                self.root.after(0, lambda: messagebox.showerror("Export Error", "Failed to export email subjects. Check your Gmail connection and try again."))
         except Exception as e:
-            self.log(f"Error exporting subjects: {e}")
+            error_msg = f"Error exporting subjects: {e}"
+            self.log(f"❌ {error_msg}")
+            self.root.after(0, lambda: messagebox.showerror("Export Error", f"An error occurred while exporting subjects:\n\n{e}\n\nCheck the logs for more details."))
+        finally:
+            # Restore UI state
+            self.root.after(0, self.restore_export_ui_state)
+
+    def restore_export_ui_state(self):
+        """Restore UI state after export."""
+        try:
+            if hasattr(self, 'export_btn'):
+                self.export_btn.config(state='normal', text="Export Subjects")
+        except Exception as e:
+            print(f"Error restoring export UI state: {e}")
     
     def auto_analyze(self):
         """Auto-analyze emails with Gemini and update settings."""
@@ -3578,7 +3685,9 @@ class GmailCleanerGUI:
             # Test Gemini API key first
             self.log("🔑 Testing Gemini API key...")
             if not self.cleaner.test_gemini_connection():
-                self.log("❌ Gemini API key test failed - check your .env file")
+                error_msg = "Gemini API key test failed - check your .env file"
+                self.log(f"❌ {error_msg}")
+                self.root.after(0, lambda: messagebox.showerror("Gemini Error", error_msg))
                 return
             self.log("✅ Gemini API key validated")
             
@@ -3587,7 +3696,9 @@ class GmailCleanerGUI:
             subjects_file = self.cleaner.export_subjects(max_emails=1000, days_back=30)
             
             if not subjects_file:
-                self.log("❌ Failed to export subjects")
+                error_msg = "Failed to export email subjects. Check your Gmail connection."
+                self.log(f"❌ {error_msg}")
+                self.root.after(0, lambda: messagebox.showerror("Export Error", error_msg))
                 return
             
             # Analyze with Gemini
@@ -3595,8 +3706,10 @@ class GmailCleanerGUI:
             proposed_rules = self.cleaner.analyze_with_gemini(subjects_file)
             
             if not proposed_rules:
-                self.log("❌ Gemini analysis failed - this may be due to OAuth authentication issues")
+                error_msg = "Gemini analysis failed. This may be due to OAuth authentication issues, network problems, or API limits."
+                self.log(f"❌ {error_msg}")
                 self.log("💡 Try re-authenticating in the Settings tab or check your network connection")
+                self.root.after(0, lambda: messagebox.showerror("Analysis Error", f"{error_msg}\n\nTry:\n- Re-authenticating in Settings\n- Checking network connection\n- Verifying Gemini API quota"))
                 return
             
             self.log("✅ Gemini analysis complete! Showing proposed changes...")
@@ -3605,7 +3718,24 @@ class GmailCleanerGUI:
             self.root.after(0, lambda: self.show_confirmation_dialog(proposed_rules))
             
         except Exception as e:
-            self.log(f"Error during auto-analysis: {e}")
+            error_msg = f"Unexpected error during auto-analysis: {e}"
+            self.log(f"❌ {error_msg}")
+            # Show error dialog to user
+            self.root.after(0, lambda: messagebox.showerror("Auto-Analysis Error", f"{error_msg}\n\nThe analysis process has been stopped. Please try again or check the logs for more details."))
+        finally:
+            # Always restore UI state
+            self.root.after(0, self.restore_ui_after_analysis)
+
+    def restore_ui_after_analysis(self):
+        """Restore UI state after analysis completes or fails."""
+        try:
+            # Re-enable any disabled buttons
+            if hasattr(self, 'auto_analyze_btn'):
+                self.auto_analyze_btn.config(state='normal', text="Auto-Analyze with Gemini")
+            if hasattr(self, 'analyze_btn'):
+                self.analyze_btn.config(state='normal')
+        except Exception as e:
+            print(f"Error restoring UI after analysis: {e}")
     
     def setup_filters(self):
         """Setup Gmail filters based on current settings."""
@@ -3752,8 +3882,10 @@ class GmailCleanerGUI:
             error_msg = f"Backlog cleanup error: {e}"
             self.log(error_msg)
             self.root.after(0, lambda: self._update_backlog_log(error_msg))
+            # Show error dialog to user
+            self.root.after(0, lambda: messagebox.showerror("Backlog Cleanup Error", f"An error occurred during backlog cleanup:\n\n{e}\n\nThe cleanup process has been stopped. Check the logs for more details."))
         finally:
-            # Reset UI state
+            # Always reset UI state regardless of success or failure
             self.log("Backlog cleanup thread finished.")
             self.root.after(0, self._cleanup_finished)
     
@@ -4832,14 +4964,76 @@ Debug Information:
         except Exception as e:
             analytics['suggestions'] = {'error': str(e)}
         
-        # Filter effectiveness (mock data for now - would need actual filter statistics)
+        # Calculate real filter effectiveness based on processing statistics
+        filter_stats = self.get_filter_effectiveness_stats()
         analytics['filter_effectiveness'] = {
-            'gmail_filters': 0.85,  # Placeholder
+            'gmail_filters': filter_stats.get('filter_efficiency', 0.0),
             'llm_classification': analytics['processing_stats'].get('avg_confidence', 0.5) if history else 0.5,
-            'user_satisfaction': (100 - analytics['processing_stats'].get('override_rate', 0)) / 100 if history else 0.8
+            'user_satisfaction': (100 - analytics['processing_stats'].get('override_rate', 0)) / 100 if history else 0.8,
+            'filter_processed_count': filter_stats.get('filter_processed', 0),
+            'llm_processed_count': filter_stats.get('llm_processed', 0),
+            'total_processed': filter_stats.get('total_processed', 0)
         }
         
         return analytics
+
+    def get_filter_effectiveness_stats(self):
+        """Calculate real filter effectiveness statistics."""
+        stats = {
+            'filter_processed': 0,
+            'llm_processed': 0,
+            'total_processed': 0,
+            'filter_efficiency': 0.0
+        }
+        
+        try:
+            # Check if we have processing statistics stored
+            # Look for recent backlog processing results
+            history = self.cleaner.learning_engine.categorization_history
+            
+            if history:
+                # Count emails processed by different methods
+                filter_count = 0
+                llm_count = 0
+                
+                for record in history:
+                    processing_method = record.get('processing_method', 'llm')
+                    if processing_method == 'filter':
+                        filter_count += 1
+                    else:
+                        llm_count += 1
+                
+                total = filter_count + llm_count
+                
+                stats.update({
+                    'filter_processed': filter_count,
+                    'llm_processed': llm_count,
+                    'total_processed': total,
+                    'filter_efficiency': (filter_count / total) if total > 0 else 0.0
+                })
+            
+            # Also check for any stored processing statistics in a separate file
+            try:
+                import os
+                stats_file = 'data/processing_stats.json'
+                if os.path.exists(stats_file):
+                    with open(stats_file, 'r') as f:
+                        stored_stats = json.load(f)
+                        # Merge with calculated stats, preferring stored if available
+                        for key in ['filter_processed', 'llm_processed', 'total_processed']:
+                            if stored_stats.get(key, 0) > stats.get(key, 0):
+                                stats[key] = stored_stats[key]
+                        
+                        # Recalculate efficiency
+                        if stats['total_processed'] > 0:
+                            stats['filter_efficiency'] = stats['filter_processed'] / stats['total_processed']
+            except Exception:
+                pass  # Ignore errors reading stats file
+                
+        except Exception as e:
+            self.logger.debug(f"Error calculating filter effectiveness: {e}")
+        
+        return stats
     
     def update_analytics_ui(self, analytics_data):
         """Update the analytics UI with fresh data."""
@@ -4933,11 +5127,28 @@ Debug Information:
         """Update filter effectiveness display."""
         self.effectiveness_text.delete(1.0, tk.END)
         
-        text = "📈 Filter Effectiveness Scores:\n\n"
+        text = "📈 Filter Effectiveness Analysis:\n\n"
+        
+        # Show processing breakdown if available
+        filter_count = effectiveness_data.get('filter_processed_count', 0)
+        llm_count = effectiveness_data.get('llm_processed_count', 0)
+        total_count = effectiveness_data.get('total_processed', 0)
+        
+        if total_count > 0:
+            text += f"📊 Processing Breakdown:\n"
+            text += f"   Gmail Filters: {filter_count:,} emails ({filter_count/total_count*100:.1f}%)\n"
+            text += f"   LLM Processing: {llm_count:,} emails ({llm_count/total_count*100:.1f}%)\n"
+            text += f"   Total Processed: {total_count:,} emails\n\n"
+        
+        text += "📈 Effectiveness Scores:\n\n"
         
         for filter_name, score in effectiveness_data.items():
-            percentage = score * 100
-            bar_length = int(score * 20)
+            # Skip count fields, only show scores
+            if filter_name.endswith('_count'):
+                continue
+                
+            percentage = score * 100 if isinstance(score, (int, float)) else 0
+            bar_length = int(score * 20) if isinstance(score, (int, float)) else 0
             bar = "█" * bar_length + "░" * (20 - bar_length)
             
             text += f"{filter_name.replace('_', ' ').title()}:\n"
@@ -4945,9 +5156,12 @@ Debug Information:
         
         # Add interpretation
         text += "\n💡 Interpretation:\n"
-        text += "   • Gmail Filters: Percentage of emails automatically sorted\n"
+        text += "   • Gmail Filters: Percentage of emails handled by existing filters\n"
         text += "   • LLM Classification: Average confidence in AI decisions\n"
-        text += "   • User Satisfaction: Based on override rate (lower = better)\n"
+        text += "   • User Satisfaction: Based on override rate (lower overrides = better)\n"
+        
+        if total_count == 0:
+            text += "\n⚠️  No processing data available yet. Run backlog cleanup to generate statistics.\n"
         
         self.effectiveness_text.insert(1.0, text)
     
