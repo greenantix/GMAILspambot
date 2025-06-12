@@ -14,6 +14,7 @@ from datetime import datetime
 from gmail_lm_cleaner import GmailLMCleaner
 from log_config import init_logging
 from tools.backlog_analyzer import analyze_backlog, export_analysis_report
+from exceptions import GmailAPIError, EmailProcessingError, LLMConnectionError
 
 def setup_logging():
     """Initialize logging for bulk processing."""
@@ -99,6 +100,9 @@ def process_with_strategy(cleaner, batch_suggestions, args):
         'errors': 0
     }
     
+    # Track processed queries to avoid double-processing
+    processed_queries = []
+    
     start_time = datetime.now()
     
     # Process high-volume senders first if we have suggestions
@@ -111,6 +115,7 @@ def process_with_strategy(cleaner, batch_suggestions, args):
             try:
                 # Create a targeted query that's still unread
                 full_query = f"is:unread in:inbox {query}"
+                processed_queries.append(query)  # Track this query
                 
                 # Process this specific sender/pattern
                 stats = cleaner.process_email_backlog(
@@ -130,18 +135,53 @@ def process_with_strategy(cleaner, batch_suggestions, args):
                 
                 print(f"   ✅ Batch {i} complete: {stats.get('total_processed', 0)} emails processed")
                 
+            except (GmailAPIError, EmailProcessingError, LLMConnectionError) as e:
+                print(f"   ❌ Batch {i} failed ({e.__class__.__name__}): {e}")
+                total_stats['errors'] += 1
+                continue
             except Exception as e:
-                print(f"   ❌ Batch {i} failed: {e}")
+                print(f"   ❌ Batch {i} failed (unexpected): {e}")
                 total_stats['errors'] += 1
                 continue
     
-    # Process remaining emails
+    # Process remaining emails (excluding those already processed in Phase 1)
     print("\n📦 Phase 2: Processing remaining emails...")
     
     try:
+        # Build exclusion query for senders already processed in Phase 1
+        exclusion_query = "is:unread in:inbox"
+        
+        if processed_queries:
+            # Extract sender exclusions from the actually processed queries
+            exclusions = []
+            for query in processed_queries:
+                # Extract sender patterns to exclude
+                if "from:" in query:
+                    # Extract the from: part and negate it
+                    from_part = query.split("from:")[1].split()[0]  # Get first from: value
+                    exclusions.append(f"-from:{from_part}")
+                elif "(" in query and "OR" in query:
+                    # Handle complex queries - try to extract individual senders
+                    # This is a simplified approach, could be enhanced
+                    parts = query.replace("(", "").replace(")", "").split(" OR ")
+                    for part in parts[:2]:  # Limit to avoid overly long queries
+                        if "from:" in part:
+                            from_part = part.strip().split("from:")[1]
+                            exclusions.append(f"-from:{from_part}")
+            
+            if exclusions:
+                exclusion_query += " " + " ".join(exclusions)
+                print(f"   📝 Excluding already processed senders: {len(exclusions)} patterns")
+                print(f"   🔍 Phase 2 query: {exclusion_query}")
+            else:
+                print("   ℹ️  No specific exclusions needed, processing all remaining emails")
+        else:
+            print("   ℹ️  No Phase 1 processing occurred, processing all emails")
+        
         stats = cleaner.process_email_backlog(
             batch_size=args.batch_size,
             older_than_days=0,
+            query_override=exclusion_query,
             log_callback=log_callback,
             progress_callback=progress_callback,
             pause_callback=pause_callback

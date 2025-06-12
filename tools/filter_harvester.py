@@ -47,6 +47,8 @@ logger = get_logger(__name__)
 
 # Cache for label ID to name mapping to reduce API calls
 _label_id_to_name_cache = {}
+# Cache for label name to ID mapping for reverse lookups
+_label_name_to_id_cache = {}
 
 
 def _get_label_name_from_id(service: Resource, label_id: str) -> Optional[str]:
@@ -91,6 +93,63 @@ def _get_label_name_from_id(service: Resource, label_id: str) -> Optional[str]:
         if label_name:
             _label_id_to_name_cache[label_id] = label_name
         return label_name
+    except GmailAPIError as e:
+        e.log_error(logger)
+        return None
+
+
+def _get_label_id_from_name(service: Resource, label_name: str) -> Optional[str]:
+    """
+    Retrieves the ID of a label from its name, using a cache to avoid redundant API calls.
+
+    Args:
+        service (Resource): The authenticated Gmail API service object.
+        label_name (str): The name of the label to look up.
+
+    Returns:
+        Optional[str]: The ID of the label, or None if an error occurs or the label is not found.
+    """
+    if label_name in _label_name_to_id_cache:
+        return _label_name_to_id_cache[label_name]
+
+    # Handle system labels which have known IDs
+    system_labels = {
+        "INBOX": "INBOX",
+        "SPAM": "SPAM", 
+        "TRASH": "TRASH",
+        "UNREAD": "UNREAD",
+        "STARRED": "STARRED",
+        "IMPORTANT": "IMPORTANT",
+        "SENT": "SENT",
+        "DRAFT": "DRAFT",
+        "CATEGORY_PERSONAL": "CATEGORY_PERSONAL",
+        "CATEGORY_SOCIAL": "CATEGORY_SOCIAL", 
+        "CATEGORY_PROMOTIONS": "CATEGORY_PROMOTIONS",
+        "CATEGORY_UPDATES": "CATEGORY_UPDATES",
+        "CATEGORY_FORUMS": "CATEGORY_FORUMS",
+    }
+    if label_name in system_labels:
+        return system_labels[label_name]
+
+    try:
+        # Get all labels and find the one with matching name
+        labels_result = wrap_gmail_api_call(
+            service.users().labels().list(userId='me').execute,
+            operation="list labels for name lookup"
+        )
+        
+        for label in labels_result.get('labels', []):
+            if label.get('name') == label_name:
+                label_id = label.get('id')
+                if label_id:
+                    _label_name_to_id_cache[label_name] = label_id
+                    # Also cache the reverse mapping
+                    _label_id_to_name_cache[label_id] = label_name
+                return label_id
+        
+        logger.warning(f"Label '{label_name}' not found")
+        return None
+        
     except GmailAPIError as e:
         e.log_error(logger)
         return None
@@ -486,9 +545,14 @@ def _apply_filter_action(service: Resource, email_id: str, action_data: Dict[str
             # Convert label names back to IDs
             add_label_ids = []
             for label_name in action_data['add_labels']:
-                # This would need a reverse lookup or caching mechanism
-                # For now, skip label additions that require ID lookup
-                pass
+                label_id = _get_label_id_from_name(service, label_name)
+                if label_id:
+                    add_label_ids.append(label_id)
+                else:
+                    logger.warning(f"Could not find label ID for '{label_name}', skipping")
+            
+            if add_label_ids:
+                modifications['addLabelIds'] = modifications.get('addLabelIds', []) + add_label_ids
         
         if action_data.get('archive'):
             modifications['removeLabelIds'] = ['INBOX']
@@ -502,17 +566,27 @@ def _apply_filter_action(service: Resource, email_id: str, action_data: Dict[str
         
         # Apply modifications if any
         if modifications:
-            service.users().messages().modify(
-                userId='me',
-                id=email_id,
-                body=modifications
-            ).execute()
+            logger.debug(f"Applying modifications to email {email_id}: {modifications}")
+            wrap_gmail_api_call(
+                service.users().messages().modify(
+                    userId='me',
+                    id=email_id,
+                    body=modifications
+                ).execute,
+                operation=f"apply filter action to email {email_id}"
+            )
+            logger.debug(f"Successfully applied filter action to email {email_id}")
+            return True
+        else:
+            logger.debug(f"No modifications to apply to email {email_id}")
             return True
             
-    except HttpError as e:
-        logger.error(f"Failed to apply filter action to email {email_id}: {e}")
-    
-    return False
+    except GmailAPIError as e:
+        e.log_error(logger)
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error applying filter action to email {email_id}: {e}")
+        return False
 
 
 if __name__ == '__main__':

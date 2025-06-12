@@ -5,6 +5,7 @@ This script uses a local LLM via LM Studio to intelligently process and clean yo
 """
 
 import os
+import sys
 import json
 import base64
 import requests
@@ -2988,10 +2989,101 @@ Respond with JSON: {{"action": "CATEGORY", "reason": "explanation", "confidence"
 class GmailCleanerGUI:
     def __init__(self):
         self.cleaner = None
+        
+        # Setup global exception handler for UI
+        self.setup_global_exception_handler()
+        
         self.setup_ui()
         
         # Auto-connect to Gmail on startup
         self.root.after(1000, self.auto_connect_gmail)  # Connect after UI loads
+    
+    def setup_global_exception_handler(self):
+        """Setup global exception handler for the UI to prevent crashes."""
+        def handle_exception(exc_type, exc_value, exc_traceback):
+            """Handle uncaught exceptions in the UI."""
+            if issubclass(exc_type, KeyboardInterrupt):
+                # Allow keyboard interrupt to work normally
+                sys.__excepthook__(exc_type, exc_value, exc_traceback)
+                return
+            
+            # Log the exception
+            error_msg = f"Uncaught exception: {exc_type.__name__}: {exc_value}"
+            print(f"GUI Error: {error_msg}")
+            
+            # Show user-friendly error dialog
+            try:
+                import tkinter.messagebox as msgbox
+                msgbox.showerror(
+                    "Application Error",
+                    f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}\n\n"
+                    f"The application will continue running, but some features may not work correctly.\n"
+                    f"Please check the logs for more details."
+                )
+            except:
+                # If we can't show a dialog, at least print to console
+                print(f"Failed to show error dialog: {error_msg}")
+            
+            # Reset any UI state that might be stuck
+            try:
+                self.reset_ui_state()
+            except:
+                pass
+        
+        # Set the global exception handler
+        sys.excepthook = handle_exception
+        
+        # Also handle exceptions in tkinter callbacks
+        def tkinter_exception_handler(exc, val, tb):
+            handle_exception(exc, val, tb)
+        
+        # This will be set after root is created
+        if hasattr(self, 'root'):
+            self.root.report_callback_exception = tkinter_exception_handler
+
+    def reset_ui_state(self):
+        """Reset UI state to recover from errors."""
+        try:
+            # Re-enable any disabled buttons
+            if hasattr(self, 'connect_btn'):
+                self.connect_btn.config(state='normal')
+            if hasattr(self, 'find_candidates_btn'):
+                self.find_candidates_btn.config(state='normal', text="Find Unsubscribe Candidates")
+            if hasattr(self, 'unsubscribe_selected_btn'):
+                self.unsubscribe_selected_btn.config(state='normal', text="Unsubscribe Selected")
+            if hasattr(self, 'save_rule_btn'):
+                self.save_rule_btn.config(state='normal', text="Save Rule")
+                
+            # Update status
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text="⚠️ Recovered from error")
+        except Exception as e:
+            print(f"Failed to reset UI state: {e}")
+
+    def handle_ui_exception(self, exc_type, exc_value, exc_traceback):
+        """Handle exceptions in tkinter callbacks."""
+        if issubclass(exc_type, KeyboardInterrupt):
+            return
+        
+        # Log the exception
+        error_msg = f"UI callback exception: {exc_type.__name__}: {exc_value}"
+        print(f"GUI Error: {error_msg}")
+        
+        # Show user-friendly error dialog
+        try:
+            messagebox.showerror(
+                "UI Error",
+                f"An error occurred in the interface:\n\n{exc_type.__name__}: {exc_value}\n\n"
+                f"The interface has been reset. Please try the operation again."
+            )
+        except:
+            print(f"Failed to show UI error dialog: {error_msg}")
+        
+        # Reset UI state
+        try:
+            self.reset_ui_state()
+        except:
+            pass
     
     def auto_connect_gmail(self):
         """Automatically connect to Gmail on startup."""
@@ -3007,6 +3099,11 @@ class GmailCleanerGUI:
         self.root = tk.Tk()
         self.root.title("Gmail Intelligent Cleaner")
         self.root.geometry("800x600")
+        
+        # Set up tkinter exception handler now that root exists
+        def tkinter_exception_handler(exc, val, tb):
+            self.handle_ui_exception(exc, val, tb)
+        self.root.report_callback_exception = tkinter_exception_handler
         
         # Create notebook for tabs
         notebook = ttk.Notebook(self.root)
@@ -3358,8 +3455,9 @@ class GmailCleanerGUI:
         self.rule_details_text = scrolledtext.ScrolledText(rules_frame, height=10)
         self.rule_details_text.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        # Bind text change event to enable save button
-        self.rule_details_text.bind('<Modified>', self.on_rule_text_modified)
+        # Bind text change events to enable save button
+        self.rule_details_text.bind('<KeyRelease>', self.on_rule_text_modified)
+        self.rule_details_text.bind('<Button-1>', self.on_rule_text_modified)
         self.rule_original_content = ""
         
         canvas.pack(side="left", fill="both", expand=True)
@@ -4179,7 +4277,7 @@ Debug Information:
             rules_dir = "rules"
             rule_file = os.path.join(rules_dir, f"{label_name}.json")
             
-            self.rule_details_text.edit_modified(False)  # Reset modified flag
+            # Reset content tracking
             
             if os.path.exists(rule_file):
                 with open(rule_file, 'r') as f:
@@ -4229,12 +4327,11 @@ Debug Information:
 
     def on_rule_text_modified(self, event=None):
         """Handle text modification in rule editor."""
-        if self.rule_details_text.edit_modified():
-            current_content = self.rule_details_text.get(1.0, tk.END).strip()
-            if current_content != self.rule_original_content.strip():
-                self.save_rule_btn.config(state='normal')
-            else:
-                self.save_rule_btn.config(state='disabled')
+        current_content = self.rule_details_text.get(1.0, tk.END).strip()
+        if hasattr(self, 'rule_original_content') and current_content != self.rule_original_content.strip():
+            self.save_rule_btn.config(state='normal')
+        else:
+            self.save_rule_btn.config(state='disabled')
 
     def save_rule_details(self):
         """Save the current rule details to file."""
@@ -4269,7 +4366,6 @@ Debug Information:
             
             self.rule_original_content = content
             self.save_rule_btn.config(state='disabled')
-            self.rule_details_text.edit_modified(False)
             
             self.log(f"✅ Saved rule for {label_name}")
             messagebox.showinfo("Success", f"Rule for '{label_name}' saved successfully!")
@@ -4989,19 +5085,201 @@ Debug Information:
     
     def apply_rule_suggestions(self, suggestions):
         """Apply rule suggestions to the system."""
-        # This would implement the actual application of suggestions
-        # For now, return a placeholder count
         applied_count = 0
         
-        # Apply sender corrections
-        sender_corrections = suggestions.get('sender_corrections', {})
-        for sender, suggestion in sender_corrections.items():
-            if suggestion['confidence'] > 0.8:  # Only apply high-confidence suggestions
-                # TODO: Actually update the rules files
-                applied_count += 1
-                self.log(f"   Applied: {sender} → {suggestion['suggested_category']}")
-        
+        try:
+            # Apply sender corrections
+            sender_corrections = suggestions.get('sender_corrections', {})
+            for sender, suggestion in sender_corrections.items():
+                if suggestion['confidence'] > 0.8:  # Only apply high-confidence suggestions
+                    category = suggestion['suggested_category']
+                    if self._update_rule_file_with_sender(category, sender):
+                        applied_count += 1
+                        self.log(f"   Applied: {sender} → {category}")
+                    else:
+                        self.log(f"   Failed to apply: {sender} → {category}")
+            
+            # Apply keyword patterns
+            keyword_patterns = suggestions.get('keyword_patterns', {})
+            for category, data in keyword_patterns.items():
+                if data.get('confidence', 0) > 0.7:  # High confidence threshold
+                    keywords = data.get('keywords', [])
+                    if keywords and self._update_rule_file_with_keywords(category, keywords):
+                        applied_count += len(keywords)
+                        self.log(f"   Applied keywords to {category}: {', '.join(keywords[:3])}...")
+            
+            # Apply confidence improvements (rule refinements)
+            confidence_improvements = suggestions.get('confidence_improvements', [])
+            for improvement in confidence_improvements:
+                if improvement.get('impact_score', 0) > 0.5:
+                    if self._apply_confidence_improvement(improvement):
+                        applied_count += 1
+                        self.log(f"   Applied improvement: {improvement.get('description', 'Unknown')}")
+            
+            if applied_count > 0:
+                self.log(f"✅ Successfully applied {applied_count} rule suggestions")
+            else:
+                self.log("No high-confidence suggestions to apply")
+                
+        except Exception as e:
+            self.log(f"❌ Error applying rule suggestions: {e}")
+            
         return applied_count
+
+    def _update_rule_file_with_sender(self, category, sender):
+        """Update a rule file to include a new sender."""
+        try:
+            rules_dir = "rules"
+            rule_file = os.path.join(rules_dir, f"{category}.json")
+            
+            # Load existing rule or create new one
+            if os.path.exists(rule_file):
+                with open(rule_file, 'r') as f:
+                    rule_data = json.load(f)
+            else:
+                rule_data = {
+                    "description": f"Rules for {category} category",
+                    "senders": [],
+                    "keywords": {"subject": [], "body": []},
+                    "conditions": {"sender_domain": [], "exclude_keywords": []},
+                    "actions": {"apply_label": category, "mark_as_read": False, "archive": False}
+                }
+            
+            # Add sender if not already present
+            if sender not in rule_data.get('senders', []):
+                rule_data.setdefault('senders', []).append(sender)
+                
+                # Ensure rules directory exists
+                os.makedirs(rules_dir, exist_ok=True)
+                
+                # Save updated rule
+                with open(rule_file, 'w') as f:
+                    json.dump(rule_data, f, indent=2)
+                
+                return True
+            
+            return True  # Already exists, consider it success
+            
+        except Exception as e:
+            self.logger.error(f"Error updating rule file for {category} with sender {sender}: {e}")
+            return False
+
+    def _update_rule_file_with_keywords(self, category, keywords):
+        """Update a rule file to include new keywords."""
+        try:
+            rules_dir = "rules"
+            rule_file = os.path.join(rules_dir, f"{category}.json")
+            
+            # Load existing rule or create new one
+            if os.path.exists(rule_file):
+                with open(rule_file, 'r') as f:
+                    rule_data = json.load(f)
+            else:
+                rule_data = {
+                    "description": f"Rules for {category} category",
+                    "senders": [],
+                    "keywords": {"subject": [], "body": []},
+                    "conditions": {"sender_domain": [], "exclude_keywords": []},
+                    "actions": {"apply_label": category, "mark_as_read": False, "archive": False}
+                }
+            
+            # Add keywords to subject keywords (most common case)
+            subject_keywords = rule_data.setdefault('keywords', {}).setdefault('subject', [])
+            added_any = False
+            
+            for keyword in keywords:
+                if keyword.lower() not in [k.lower() for k in subject_keywords]:
+                    subject_keywords.append(keyword)
+                    added_any = True
+            
+            if added_any:
+                # Ensure rules directory exists
+                os.makedirs(rules_dir, exist_ok=True)
+                
+                # Save updated rule
+                with open(rule_file, 'w') as f:
+                    json.dump(rule_data, f, indent=2)
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error updating rule file for {category} with keywords: {e}")
+            return False
+
+    def _apply_confidence_improvement(self, improvement):
+        """Apply a confidence improvement suggestion."""
+        try:
+            improvement_type = improvement.get('type')
+            
+            if improvement_type == 'exclude_keyword':
+                # Add keyword to exclude list for a category
+                category = improvement.get('category')
+                keyword = improvement.get('keyword')
+                return self._add_exclude_keyword(category, keyword)
+                
+            elif improvement_type == 'domain_rule':
+                # Add domain-based rule
+                category = improvement.get('category')
+                domain = improvement.get('domain')
+                return self._add_domain_rule(category, domain)
+                
+            else:
+                self.logger.warning(f"Unknown improvement type: {improvement_type}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error applying confidence improvement: {e}")
+            return False
+
+    def _add_exclude_keyword(self, category, keyword):
+        """Add a keyword to the exclude list for a category."""
+        try:
+            rules_dir = "rules"
+            rule_file = os.path.join(rules_dir, f"{category}.json")
+            
+            if os.path.exists(rule_file):
+                with open(rule_file, 'r') as f:
+                    rule_data = json.load(f)
+                
+                exclude_keywords = rule_data.setdefault('conditions', {}).setdefault('exclude_keywords', [])
+                if keyword not in exclude_keywords:
+                    exclude_keywords.append(keyword)
+                    
+                    with open(rule_file, 'w') as f:
+                        json.dump(rule_data, f, indent=2)
+                    
+                    return True
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error adding exclude keyword {keyword} to {category}: {e}")
+            return False
+
+    def _add_domain_rule(self, category, domain):
+        """Add a domain rule for a category."""
+        try:
+            rules_dir = "rules"
+            rule_file = os.path.join(rules_dir, f"{category}.json")
+            
+            if os.path.exists(rule_file):
+                with open(rule_file, 'r') as f:
+                    rule_data = json.load(f)
+                
+                domain_rules = rule_data.setdefault('conditions', {}).setdefault('sender_domain', [])
+                if domain not in domain_rules:
+                    domain_rules.append(domain)
+                    
+                    with open(rule_file, 'w') as f:
+                        json.dump(rule_data, f, indent=2)
+                    
+                    return True
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error adding domain rule {domain} to {category}: {e}")
+            return False
 
     def run_auto_evolution(self):
         """Run the auto-evolution process."""

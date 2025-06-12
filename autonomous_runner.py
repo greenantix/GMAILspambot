@@ -12,6 +12,10 @@ from gmail_api_utils import GmailEmailManager, get_gmail_service
 import audit_tool
 from cron_utils import CronScheduler # Import CronScheduler
 import email_cleanup
+from exceptions import (
+    GmailAPIError, EmailProcessingError, LLMConnectionError, 
+    AuthenticationError, ConfigurationError, handle_exception_with_logging
+)
 
 SETTINGS_PATH = "config/settings.json"
 DEFAULT_LOG_FILE = "automation.log"
@@ -237,14 +241,29 @@ def process_new_emails_batch(gmail_cleaner, email_manager, batch_size=50):
                 if not success:
                     logger.error(f"Failed to execute action '{action}' for email ID: {msg_id}")
                     audit_tool.log_action("ERROR", msg_id, action, f"Failed to execute action: {reason}")
+            except EmailProcessingError as processing_e:
+                processing_e.log_error(logger)
+                audit_tool.log_action("ERROR", msg_id, "Processing Failed", f"Processing error: {processing_e.message}")
+                continue  # Continue to next email on processing errors
+            except LLMConnectionError as llm_e:
+                llm_e.log_error(logger)
+                audit_tool.log_action("ERROR", msg_id, "LLM Failed", f"LLM error: {llm_e.message}")
+                continue  # Continue to next email on LLM errors
+            except GmailAPIError as api_e:
+                api_e.log_error(logger)
+                audit_tool.log_action("ERROR", msg_id, "API Failed", f"API error: {api_e.message}")
+                continue  # Continue to next email on API errors
             except Exception as email_e:
-                logger.error(f"Error processing individual email ID {msg_id}: {email_e}")
+                logger.error(f"Unexpected error processing email ID {msg_id}: {email_e}")
                 logger.debug(traceback.format_exc())
-                audit_tool.log_action("ERROR", msg_id, "Processing Failed", f"Error: {email_e}")
-                continue # Continue to the next email even if one fails
+                audit_tool.log_action("ERROR", msg_id, "Unexpected Error", f"Error: {email_e}")
+                continue
 
+    except GmailAPIError as api_e:
+        api_e.log_error(logger)
+        logger.error("Gmail API error during batch retrieval - may need re-authentication")
     except Exception as e:
-        logger.error(f"Error during real-time email processing batch retrieval: {e}")
+        logger.error(f"Unexpected error during real-time email processing: {e}")
         logger.debug(traceback.format_exc())
 
 def run_email_cleanup(gmail_service, settings_path):
@@ -276,14 +295,21 @@ def run_email_cleanup(gmail_service, settings_path):
             dry_run=settings.get("email_cleanup", {}).get("dry_run", False)
         )
         
-        # Log results
+        # Log results with detailed breakdown for main log
         if results:
             total_actions = results.get('TRASH', 0) + results.get('DELETE', 0) + results.get('ARCHIVE', 0)
             error_count = results.get('ERRORS', 0)
-            logger.info(f"Email cleanup completed: {total_actions} actions performed, {error_count} errors")
+            
+            # Detailed breakdown for main automation log
+            logger.info(f"Email cleanup results breakdown:")
+            logger.info(f"  - Emails moved to trash: {results.get('TRASH', 0)}")
+            logger.info(f"  - Emails permanently deleted: {results.get('DELETE', 0)}")
+            logger.info(f"  - Emails archived: {results.get('ARCHIVE', 0)}")
+            logger.info(f"  - Errors encountered: {error_count}")
+            logger.info(f"  - Total actions performed: {total_actions}")
             
             if error_count > 0:
-                logger.warning(f"Some cleanup actions failed. Check logs for details.")
+                logger.warning(f"Some cleanup actions failed. Check detailed logs for specifics.")
                 return error_count == 0  # Return True only if no errors
             return True
         else:
@@ -294,6 +320,78 @@ def run_email_cleanup(gmail_service, settings_path):
         logger.error(f"Error during email cleanup: {e}")
         logger.debug(traceback.format_exc())
         return False
+
+def check_job_prerequisites(job_name, settings, logger):
+    """
+    Check if prerequisites are met for a specific job.
+    
+    Args:
+        job_name (str): Name of the job to check
+        settings (dict): Application settings
+        logger: Logger instance
+    
+    Returns:
+        tuple: (can_run: bool, reason: str)
+    """
+    if job_name == "batch_analysis":
+        # Check for Gemini API key
+        gemini_key = os.environ.get('GEMINI_API_KEY')
+        if not gemini_key:
+            return False, "GEMINI_API_KEY environment variable not set"
+        
+        # Check export directory exists
+        export_dir = settings.get("paths", {}).get("exports", "exports")
+        if not os.path.exists(export_dir):
+            try:
+                os.makedirs(export_dir, exist_ok=True)
+                logger.info(f"Created export directory: {export_dir}")
+            except Exception as e:
+                return False, f"Cannot create export directory: {e}"
+    
+    elif job_name == "realtime_processing":
+        # Check if LM Studio is reachable
+        lm_studio_endpoint = settings.get("api", {}).get("lm_studio", {}).get("endpoint", "http://localhost:1234")
+        try:
+            import requests
+            response = requests.get(f"{lm_studio_endpoint}/health", timeout=5)
+            if response.status_code != 200:
+                return False, f"LM Studio health check failed: {response.status_code}"
+        except requests.exceptions.RequestException as e:
+            return False, f"LM Studio not reachable: {e}"
+    
+    elif job_name == "email_cleanup":
+        # Check if cleanup is enabled
+        cleanup_enabled = settings.get("email_cleanup", {}).get("enable_cleanup", True)
+        if not cleanup_enabled:
+            return False, "Email cleanup is disabled in settings"
+        
+        # Check retention settings
+        retention_settings = settings.get("retention", {})
+        if not retention_settings:
+            return False, "No retention policies configured"
+    
+    return True, "Prerequisites met"
+
+def log_job_result_to_main_log(job_name, success, duration, details, logger):
+    """
+    Log job results to the main automation log for unified tracking.
+    
+    Args:
+        job_name (str): Name of the job
+        success (bool): Whether the job succeeded
+        duration (timedelta): How long the job took
+        details (str): Additional details about the job result
+        logger: Logger instance
+    """
+    status = "SUCCESS" if success else "FAILED"
+    
+    logger.info(f"=== JOB EXECUTION SUMMARY ===")
+    logger.info(f"Job: {job_name}")
+    logger.info(f"Status: {status}")
+    logger.info(f"Duration: {duration}")
+    logger.info(f"Details: {details}")
+    logger.info(f"Timestamp: {datetime.utcnow().isoformat()}Z")
+    logger.info(f"=== END JOB SUMMARY ===")
 
 def main():
     # Load settings
@@ -309,7 +407,7 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(f"An unhandled error occurred during settings loading: {e}", file=sys.stderr)
+        print(f"Unexpected error during settings loading: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Initialize logging
@@ -328,22 +426,38 @@ def main():
         else:
             logger.error("Failed to get Gmail API service.")
             sys.exit(1) # Exit if Gmail service cannot be initialized
+    except AuthenticationError as auth_e:
+        auth_e.log_error(logger)
+        logger.critical("Gmail authentication failed. Check credentials and token files.")
+        sys.exit(1)
+    except GmailAPIError as api_e:
+        api_e.log_error(logger)
+        logger.critical("Gmail API initialization failed.")
+        sys.exit(1)
     except Exception as e:
-        logger.error(f"Failed to initialize Gmail API service: {e}")
+        logger.error(f"Unexpected error initializing Gmail API service: {e}")
         logger.debug(traceback.format_exc())
-        sys.exit(1) # Exit if Gmail service cannot be initialized
+        sys.exit(1)
 
     # Initialize GmailLMCleaner and GmailEmailManager
     gmail_cleaner = None
     email_manager = None
     try:
-        gmail_cleaner = GmailLMCleaner(service=gmail_service) # Pass service to cleaner
-        email_manager = GmailEmailManager(service=gmail_service) # Pass service to manager
+        gmail_cleaner = GmailLMCleaner(service=gmail_service)
+        email_manager = GmailEmailManager(service=gmail_service)
         logger.info("GmailLMCleaner and GmailEmailManager initialized successfully.")
+    except ConfigurationError as config_e:
+        config_e.log_error(logger)
+        logger.critical("Configuration error during cleaner initialization.")
+        sys.exit(1)
+    except AuthenticationError as auth_e:
+        auth_e.log_error(logger)
+        logger.critical("Authentication error during cleaner initialization.")
+        sys.exit(1)
     except Exception as e:
-        logger.error(f"Failed to initialize GmailLMCleaner or GmailEmailManager: {e}")
+        logger.error(f"Unexpected error initializing GmailLMCleaner or GmailEmailManager: {e}")
         logger.debug(traceback.format_exc())
-        sys.exit(1) # Exit if core components fail to initialize
+        sys.exit(1)
 
     # Scheduling config
     # Use reasonable cron expressions for the jobs
@@ -367,37 +481,75 @@ def main():
                 logger.info(f"Found {len(due_jobs)} job(s) due: {[job.name for job in due_jobs]}")
             
             for job in due_jobs:
-                logger.info(f"Executing scheduled job: {job.name}")
+                logger.info(f"Checking prerequisites for job: {job.name}")
+                
+                # Check prerequisites before running job
+                can_run, prereq_reason = check_job_prerequisites(job.name, settings, logger)
+                if not can_run:
+                    logger.warning(f"Skipping job '{job.name}': {prereq_reason}")
+                    scheduler.update_job(job.name, status="skipped")
+                    continue
+                
+                logger.info(f"Prerequisites met, executing job: {job.name}")
+                job_start_time = datetime.now()
                 success = False
+                job_details = ""
+                
                 try:
                     if job.name == "batch_analysis":
                         success = run_batch_analysis(gmail_cleaner, export_dir, SETTINGS_PATH)
+                        job_details = f"Export dir: {export_dir}"
                     elif job.name == "realtime_processing":
                         success = run_realtime_processing(gmail_cleaner, email_manager, batch_size=50)
+                        job_details = "Batch size: 50"
                     elif job.name == "email_cleanup":
                         success = run_email_cleanup(gmail_service, SETTINGS_PATH)
+                        job_details = "Retention policy applied"
                     else:
                         logger.warning(f"Unknown job '{job.name}' found in scheduler. Skipping.")
                         continue
                     
+                    # Calculate duration and log results
+                    job_duration = datetime.now() - job_start_time
+                    
                     if success:
                         scheduler.update_job(job.name, status="success")
-                        logger.info(f"Job '{job.name}' completed successfully.")
+                        logger.info(f"Job '{job.name}' completed successfully in {job_duration}")
+                        log_job_result_to_main_log(job.name, True, job_duration, job_details, logger)
                     else:
                         scheduler.update_job(job.name, status="error")
-                        logger.error(f"Job '{job.name}' failed.")
+                        logger.error(f"Job '{job.name}' failed after {job_duration}")
+                        log_job_result_to_main_log(job.name, False, job_duration, f"Job failed: {job_details}", logger)
+                except (GmailAPIError, EmailProcessingError, LLMConnectionError) as job_e:
+                    job_e.log_error(logger)
+                    scheduler.update_job(job.name, status="error")
+                    # These are recoverable errors, continue with next job
+                except AuthenticationError as auth_e:
+                    auth_e.log_error(logger)
+                    scheduler.update_job(job.name, status="error") 
+                    logger.critical(f"Authentication failed for job '{job.name}'. System may need re-authentication.")
+                    time.sleep(300)  # Wait 5 minutes before retrying on auth errors
                 except Exception as job_e:
-                    logger.error(f"Error executing job '{job.name}': {job_e}")
+                    logger.error(f"Unexpected error executing job '{job.name}': {job_e}")
                     logger.debug(traceback.format_exc())
-                    scheduler.update_job(job.name, status="error") # Mark job as error even if it re-raises
+                    scheduler.update_job(job.name, status="error")
 
+        except KeyboardInterrupt:
+            logger.info("Received interrupt signal, shutting down gracefully...")
+            break
+        except (GmailAPIError, LLMConnectionError) as recoverable_e:
+            recoverable_e.log_error(logger)
+            logger.warning("Recoverable error in main loop, continuing after delay...")
+            time.sleep(30)  # Brief pause for recoverable errors
+        except AuthenticationError as auth_e:
+            auth_e.log_error(logger)
+            logger.critical("Authentication error in main loop. Manual intervention required.")
+            time.sleep(3600)  # Wait 1 hour before retrying on auth errors
         except Exception as e:
-            logger.critical(f"Critical error in main loop, attempting graceful shutdown: {e}")
+            logger.critical(f"Critical unexpected error in main loop: {e}")
             logger.debug(traceback.format_exc())
-            # Consider adding a mechanism for graceful shutdown or alerting here
-            # For now, we'll just log and continue, but in a real system,
-            # you might want to break the loop or trigger a system restart.
-            time.sleep(60) # Sleep longer on critical error to prevent rapid-fire failures
+            # Sleep longer on critical error to prevent rapid-fire failures
+            time.sleep(60)
 
         # Sleep for a shorter, fixed interval to allow for more responsive scheduling checks
         sleep_interval_seconds = 30
