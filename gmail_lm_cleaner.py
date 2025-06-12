@@ -3440,6 +3440,16 @@ class GmailCleanerGUI:
         ttk.Checkbutton(options_frame, text="Dry Run (don't actually modify emails)",
                        variable=self.dry_run_var).pack(anchor=tk.W)
         
+        self.use_existing_export_var = tk.BooleanVar(value=False)
+        use_existing_cb = ttk.Checkbutton(options_frame, text="Use existing email_subjects.txt (skip re-export)",
+                                         variable=self.use_existing_export_var)
+        use_existing_cb.pack(anchor=tk.W)
+        
+        # Add helpful info text
+        info_label = ttk.Label(options_frame, text="   ℹ️ Useful for testing or when you have connection issues", 
+                              foreground="gray", font=('TkDefaultFont', 8))
+        info_label.pack(anchor=tk.W)
+        
         # Log frame
         log_frame = ttk.LabelFrame(parent, text="Log", padding=10)
         log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -3917,16 +3927,40 @@ class GmailCleanerGUI:
                 return
             self.log("✅ Gemini API key validated")
             
-            # Export subjects first  
-            self.log("📤 Exporting email subjects...")
-            self.log("🔍 Scanning recent emails (up to 500 from last 30 days)...")
-            subjects_file = self.cleaner.export_subjects(max_emails=500, days_back=30)
+            # Check if we should use existing export or create new one
+            subjects_file = 'email_subjects.txt'
             
+            if self.use_existing_export_var.get():
+                # Use existing export file if it exists
+                if os.path.exists(subjects_file):
+                    self.log("📄 Using existing email_subjects.txt file")
+                    self.log(f"📊 File size: {os.path.getsize(subjects_file)} bytes")
+                    # Check if file has content
+                    with open(subjects_file, 'r', encoding='utf-8') as f:
+                        content = f.read().strip()
+                    if not content:
+                        self.log("⚠️ Existing file is empty, will export fresh data")
+                        subjects_file = None
+                    else:
+                        line_count = len(content.split('\n'))
+                        self.log(f"📋 Found {line_count} lines in existing export")
+                else:
+                    self.log("⚠️ No existing email_subjects.txt found, will export fresh data")
+                    subjects_file = None
+            else:
+                subjects_file = None
+            
+            # Export subjects if needed
             if not subjects_file:
-                error_msg = "Failed to export email subjects. Check your Gmail connection."
-                self.log(f"❌ {error_msg}")
-                self.root.after(0, lambda: messagebox.showerror("Export Error", error_msg))
-                return
+                self.log("📤 Exporting email subjects...")
+                self.log("🔍 Scanning recent emails (up to 500 from last 30 days)...")
+                subjects_file = self.cleaner.export_subjects(max_emails=500, days_back=30)
+                
+                if not subjects_file:
+                    error_msg = "Failed to export email subjects. Check your Gmail connection."
+                    self.log(f"❌ {error_msg}")
+                    self.root.after(0, lambda: messagebox.showerror("Export Error", error_msg))
+                    return
             
             # Analyze with Gemini
             self.log("🤖 Analyzing with Gemini...")
