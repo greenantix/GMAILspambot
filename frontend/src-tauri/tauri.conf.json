@@ -23,6 +23,13 @@
     },
     "withGlobalTauri": true
   },
+  "app": {
+    "sidecar": {
+      "script": "python3",
+      "args": ["../backend/api_server.py"],
+      "workingDir": "../"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

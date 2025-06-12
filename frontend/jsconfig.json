@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/components/*": ["src/components/*"],
+      "@/lib/utils": ["src/lib/utils"]
+    }
+  },
+  "exclude": ["node_modules", "dist", "build", "src-tauri"]
+}
