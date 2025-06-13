@@ -1,3 +1,22 @@
+# LLMdiver Enhanced Analysis - 2025-06-12 19:56:18.759278
+
+## Project: GMAILspambot
+
+# Repository Analysis: GMAILspambot
+
+## Project Information
+- Primary Language: python
+- Framework: unknown
+- Manifests: 1
+
+## Manifest Analysis
+
+### New manifest: /home/greenantix/AI/GMAILspambot/requirements.txt
+**Dependencies:** google-api-python-client, google-auth, google-auth-oauthlib, google-auth-httplib2, google-generativeai, flask, requests, python-dotenv, pandas, croniter, colorama, PySide6
+
+
+
+## Code Analysis
 This file is a merged representation of a subset of the codebase, containing specifically included files and files not matching ignore patterns, combined into a single document by Repomix.
 The content has been processed where comments have been removed, empty lines have been removed, content has been compressed (code blocks are separated by ⋮---- delimiter).
 
@@ -4411,3 +4430,9 @@ cd "$(dirname "$0")"
 # Launch with proper environment
 QML_IMPORT_PATH="qml" python3 qml_main.py
 ```
+
+
+
+## AI Analysis
+
+Analysis failed: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
